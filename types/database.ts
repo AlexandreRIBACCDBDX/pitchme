@@ -30,6 +30,7 @@ export interface Database {
           product_category: string;
           product_description: string;
           website_url: string | null;
+          instagram_url: string | null;
           stand_size: string | null;
           electricity_needed: boolean;
           previous_participant: boolean;

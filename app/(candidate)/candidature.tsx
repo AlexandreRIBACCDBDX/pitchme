@@ -27,6 +27,7 @@ export default function CandidatureForm() {
     productCategory: '',
     productDescription: '',
     websiteUrl: '',
+    instagramUrl: '',
     standSize: '3m',
     electricityNeeded: false,
     previousParticipant: false,
@@ -51,6 +52,7 @@ export default function CandidatureForm() {
         productCategory: data.product_category || '',
         productDescription: data.product_description || '',
         websiteUrl: data.website_url || '',
+        instagramUrl: (data as any).instagram_url || '',
         standSize: data.stand_size || '3m',
         electricityNeeded: data.electricity_needed || false,
         previousParticipant: data.previous_participant || false,
@@ -91,6 +93,7 @@ export default function CandidatureForm() {
       product_category: form.productCategory,
       product_description: form.productDescription,
       website_url: form.websiteUrl || null,
+      instagram_url: form.instagramUrl || null,
       stand_size: form.standSize,
       electricity_needed: form.electricityNeeded,
       previous_participant: form.previousParticipant,
@@ -99,10 +102,10 @@ export default function CandidatureForm() {
     let candidatureId = existingId;
 
     if (existingId) {
-      const { error } = await supabase.from('candidatures').update(payload).eq('id', existingId);
+      const { error } = await supabase.from('candidatures').update(payload as any).eq('id', existingId!);
       if (error) { Alert.alert('Erreur', error.message); setSaving(false); return; }
     } else {
-      const { data, error } = await supabase.from('candidatures').insert(payload).select().single();
+      const { data, error } = await supabase.from('candidatures').insert(payload as any).select().single();
       if (error) { Alert.alert('Erreur', error.message); setSaving(false); return; }
       candidatureId = data?.id;
     }
@@ -216,8 +219,24 @@ export default function CandidatureForm() {
             />
             <Text style={styles.charCount}>{form.productDescription.length} / 1000</Text>
 
-            <Text style={styles.label}>Site web / Réseaux sociaux</Text>
-            <TextInput style={styles.input} value={form.websiteUrl} onChangeText={v => update('websiteUrl', v)} placeholder="https://..." placeholderTextColor={Colors.textMuted} keyboardType="url" autoCapitalize="none" />
+            <Text style={styles.label}>Site web</Text>
+            <TextInput style={styles.input} value={form.websiteUrl} onChangeText={v => update('websiteUrl', v)} placeholder="https://monsite.fr" placeholderTextColor={Colors.textMuted} keyboardType="url" autoCapitalize="none" />
+
+            <Text style={styles.label}>Instagram</Text>
+            <View style={styles.instagramRow}>
+              <View style={styles.instagramPrefix}>
+                <Text style={styles.instagramAt}>@</Text>
+              </View>
+              <TextInput
+                style={[styles.input, styles.instagramInput]}
+                value={form.instagramUrl}
+                onChangeText={v => update('instagramUrl', v.replace('@', ''))}
+                placeholder="mon_compte"
+                placeholderTextColor={Colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
 
             <Text style={styles.sectionTitle}>📐 Stand & logistique</Text>
 
@@ -298,4 +317,8 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: Colors.secondary, borderRadius: 10, padding: 18, alignItems: 'center', marginTop: 24 },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  instagramRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  instagramPrefix: { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, borderRightWidth: 0, borderTopLeftRadius: 10, borderBottomLeftRadius: 10, padding: 14, justifyContent: 'center' },
+  instagramAt: { color: Colors.textSecondary, fontSize: 16, fontWeight: 'bold' },
+  instagramInput: { flex: 1, borderTopLeftRadius: 0, borderBottomLeftRadius: 0, marginBottom: 0 },
 });
