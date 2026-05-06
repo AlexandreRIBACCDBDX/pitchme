@@ -29,10 +29,10 @@ export default function Login() {
       });
 
       if (authError) {
-        if (authError.message.includes('Email not confirmed')) {
+        const msg = authError.message.toLowerCase();
+        if (msg.includes('not confirmed') || msg.includes('email_not_confirmed')) {
           setError('Email non confirmé — vérifiez votre boîte mail.');
-          router.push('/(auth)/verify-email');
-        } else if (authError.message.includes('Invalid login')) {
+        } else if (msg.includes('invalid') || msg.includes('credentials')) {
           setError('Email ou mot de passe incorrect.');
         } else {
           setError(authError.message);
@@ -40,27 +40,29 @@ export default function Login() {
         return;
       }
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', data.user.id)
-        .maybeSingle();
+      // Fetch profile to determine role — fallback to candidate if fetch fails
+      let role = 'candidate';
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', data.user.id)
+          .maybeSingle();
 
-      if (!profile) {
-        await supabase.from('profiles').insert({
-          id: data.user.id,
-          email: data.user.email ?? '',
-          role: 'candidate',
-        });
-        router.replace('/(candidate)');
-        return;
+        if (!profile) {
+          await (supabase.from('profiles') as any).insert({
+            id: data.user.id,
+            email: data.user.email ?? '',
+            role: 'candidate',
+          });
+        } else {
+          role = profile.role;
+        }
+      } catch {
+        // profile fetch failed — default role already 'candidate'
       }
 
-      if (profile.role === 'admin') {
-        router.replace('/(admin)');
-      } else {
-        router.replace('/(candidate)');
-      }
+      router.replace(role === 'admin' ? '/(admin)' : '/(candidate)');
     } catch (e: any) {
       setError(e?.message ?? 'Erreur réseau. Vérifiez votre connexion.');
     } finally {

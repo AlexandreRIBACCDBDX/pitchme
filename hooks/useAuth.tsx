@@ -40,7 +40,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch (e) {
         console.error('[Auth] getSession failed:', e);
-        setLoading(false);
+        // Fallback: try to recover user from localStorage directly so a network
+        // hiccup (e.g. corporate SSL proxy) doesn't log the user out on F5.
+        const recovered = recoverUserFromStorage();
+        if (recovered) {
+          setUser(recovered);
+          await fetchProfile(recovered.id);
+        } else {
+          setLoading(false);
+        }
       } finally {
         clearTimeout(timeout);
       }
@@ -63,25 +71,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function fetchProfile(userId: string) {
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
-      if (error?.code === 'PGRST116' || !data) {
-        const { data: { user: u } } = await supabase.auth.getUser();
-        const { data: created } = await supabase
-          .from('profiles')
-          .insert({ id: userId, email: u?.email ?? '', role: 'candidate' })
-          .select()
-          .single();
-        setProfile(created ?? null);
-      } else {
+      if (data) {
         setProfile(data);
+        return;
       }
+
+      // Profile missing — create it using auth metadata as source of truth
+      const { data: { user: u } } = await supabase.auth.getUser();
+      const meta = u?.user_metadata ?? {};
+      const newProfile = {
+        id: userId,
+        email: u?.email ?? '',
+        first_name: meta.first_name ?? '',
+        last_name: meta.last_name ?? '',
+        phone: meta.phone ?? '',
+        role: 'candidate' as const,
+      };
+
+      const { data: created } = await (supabase.from('profiles') as any)
+        .insert(newProfile)
+        .select()
+        .maybeSingle();
+
+      // Whether insert succeeded or not, set a usable profile
+      setProfile(created ?? { ...newProfile, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     } catch (e) {
       console.error('[Auth] fetchProfile failed:', e);
+      // Last resort: build profile from JWT metadata so the app stays usable
+      try {
+        const { data: { user: u } } = await supabase.auth.getUser();
+        const meta = u?.user_metadata ?? {};
+        setProfile({
+          id: userId,
+          email: u?.email ?? '',
+          first_name: meta.first_name ?? '',
+          last_name: meta.last_name ?? '',
+          phone: meta.phone ?? '',
+          role: 'candidate',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      } catch {}
     } finally {
       setLoading(false);
     }
@@ -101,4 +137,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   return useContext(AuthContext);
+}
+
+// Read the Supabase user from localStorage without making any network call.
+// Used as a last-resort fallback when getSession() throws (e.g. proxy errors).
+function recoverUserFromStorage(): any | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const key = Object.keys(window.localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
+    if (!key) return null;
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.user ?? null;
+  } catch {
+    return null;
+  }
 }

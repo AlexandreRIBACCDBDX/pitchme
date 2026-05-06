@@ -21,7 +21,7 @@ export default function CandidateDashboard() {
     const { data } = await supabase
       .from('candidatures')
       .select('*')
-      .single();
+      .maybeSingle();
     setCandidature(data);
 
     if (data) {

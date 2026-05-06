@@ -11,10 +11,23 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error('[Supabase] Missing env vars — copy .env.example to .env and fill in your credentials.');
 }
 
+// Explicit localStorage adapter for web — avoids the ambiguity of storage:undefined
+// which can fall back to in-memory storage in some Expo/bundler environments.
+const webStorage = typeof window !== 'undefined' ? {
+  getItem: (key: string): string | null => {
+    try { return window.localStorage.getItem(key); } catch { return null; }
+  },
+  setItem: (key: string, value: string): void => {
+    try { window.localStorage.setItem(key, value); } catch {}
+  },
+  removeItem: (key: string): void => {
+    try { window.localStorage.removeItem(key); } catch {}
+  },
+} : undefined;
+
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
-    // Use localStorage on web, AsyncStorage on native
-    storage: Platform.OS === 'web' ? undefined : AsyncStorage,
+    storage: Platform.OS === 'web' ? webStorage : AsyncStorage,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: Platform.OS === 'web',

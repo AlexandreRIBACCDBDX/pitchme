@@ -15,6 +15,7 @@ export default function CandidatureForm() {
   const { user } = useAuth();
   const [existingId, setExistingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
   const [step, setStep] = useState(1);
 
   const [form, setForm] = useState({
@@ -77,69 +78,82 @@ export default function CandidatureForm() {
     return null;
   }
 
+  async function uploadPhotos(photoList: any[], candidatureId: string, userId: string) {
+    for (const photo of photoList) {
+      try {
+        const ext = (photo.name ?? 'photo').split('.').pop() || 'jpg';
+        const path = `${userId}/${candidatureId}/${Date.now()}.${ext}`;
+        const response = await fetch(photo.uri);
+        const blob = await response.blob();
+        const { data: uploadData } = await supabase.storage
+          .from('product-photos')
+          .upload(path, blob, { contentType: `image/${ext}` });
+        if (uploadData) {
+          const { data: { publicUrl } } = supabase.storage.from('product-photos').getPublicUrl(path);
+          await (supabase.from('documents') as any).insert({
+            candidature_id: candidatureId,
+            uploaded_by: userId,
+            file_name: photo.name,
+            file_url: publicUrl,
+            file_type: 'image',
+            doc_category: 'product_photo',
+          });
+        }
+      } catch {}
+    }
+  }
+
   async function handleSubmit() {
     const err2 = validateStep2();
-    if (err2) { Alert.alert('Champs manquants', err2); return; }
+    if (err2) { setErrorMsg(err2); return; }
 
+    setErrorMsg('');
     setSaving(true);
-    const payload = {
-      user_id: user!.id,
-      business_name: form.businessName,
-      siret: form.siret.replace(/\s/g, ''),
-      siret_data: form.siretData as any,
-      address: form.address,
-      city: form.city,
-      postal_code: form.postalCode,
-      product_category: form.productCategory,
-      product_description: form.productDescription,
-      website_url: form.websiteUrl || null,
-      instagram_url: form.instagramUrl || null,
-      stand_size: form.standSize,
-      electricity_needed: form.electricityNeeded,
-      previous_participant: form.previousParticipant,
-    };
 
-    let candidatureId = existingId;
+    const deadline = <T,>(p: Promise<T>): Promise<T> =>
+      Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('Délai dépassé — vérifiez votre connexion réseau')), 12000))]);
 
-    if (existingId) {
-      const { error } = await supabase.from('candidatures').update(payload as any).eq('id', existingId!);
-      if (error) { Alert.alert('Erreur', error.message); setSaving(false); return; }
-    } else {
-      const { data, error } = await supabase.from('candidatures').insert(payload as any).select().single();
-      if (error) { Alert.alert('Erreur', error.message); setSaving(false); return; }
-      candidatureId = data?.id;
-    }
+    try {
+      if (!user) throw new Error('Non connecté');
 
-    // Upload photos
-    if (photos.length > 0 && candidatureId) {
-      for (const photo of photos) {
-        try {
-          const ext = photo.name.split('.').pop() || 'jpg';
-          const path = `${user!.id}/${candidatureId}/${Date.now()}.${ext}`;
-          const response = await fetch(photo.uri);
-          const blob = await response.blob();
-          const { data: uploadData } = await supabase.storage.from('product-photos').upload(path, blob, { contentType: `image/${ext}` });
-          if (uploadData) {
-            const { data: { publicUrl } } = supabase.storage.from('product-photos').getPublicUrl(path);
-            await supabase.from('documents').insert({
-              candidature_id: candidatureId,
-              uploaded_by: user!.id,
-              file_name: photo.name,
-              file_url: publicUrl,
-              file_type: 'image',
-              doc_category: 'product_photo',
-            });
-          }
-        } catch {}
+      const payload = {
+        user_id: user.id,
+        business_name: form.businessName,
+        siret: form.siret.replace(/\s/g, ''),
+        siret_data: form.siretData as any,
+        address: form.address,
+        city: form.city,
+        postal_code: form.postalCode,
+        product_category: form.productCategory,
+        product_description: form.productDescription,
+        website_url: form.websiteUrl || null,
+        instagram_url: form.instagramUrl || null,
+        stand_size: form.standSize,
+        electricity_needed: form.electricityNeeded,
+        previous_participant: form.previousParticipant,
+      };
+
+      let candidatureId = existingId;
+
+      if (existingId) {
+        const { error } = await deadline((supabase.from('candidatures') as any).update(payload).eq('id', existingId)) as any;
+        if (error) { console.error('[Submit] update error:', error); setErrorMsg(error.message); return; }
+      } else {
+        const { data, error } = await deadline((supabase.from('candidatures') as any).insert(payload).select().maybeSingle()) as any;
+        if (error) { console.error('[Submit] insert error:', error); setErrorMsg(error.message); return; }
+        candidatureId = data?.id;
       }
-    }
 
-    setSaving(false);
-    Alert.alert(
-      existingId ? 'Candidature mise à jour' : 'Candidature envoyée !',
-      existingId ? 'Vos informations ont été mises à jour.' : 'Votre candidature a été transmise. Vous serez notifié de son avancement.',
-      [{ text: 'OK', onPress: () => router.replace('/(candidate)') }]
-    );
+      if (photos.length > 0 && candidatureId) {
+        uploadPhotos(photos, candidatureId, user.id);
+      }
+      router.replace('/(candidate)');
+    } catch (e: any) {
+      console.error('[Submit] exception:', e);
+      setErrorMsg(e?.message ?? 'Erreur réseau. Vérifiez votre connexion.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -167,7 +181,12 @@ export default function CandidatureForm() {
             <SiretInput
               value={form.siret}
               onChange={v => update('siret', v)}
-              onVerified={data => update('siretData', data)}
+              onVerified={data => {
+                update('siretData', data);
+                if (data.adresse)    update('address',    data.adresse);
+                if (data.code_postal) update('postalCode', data.code_postal);
+                if (data.ville)      update('city',       data.ville);
+              }}
             />
 
             <Text style={[styles.label, { marginTop: 16 }]}>Adresse *</Text>
@@ -267,6 +286,12 @@ export default function CandidatureForm() {
             <Text style={styles.hint}>Ajoutez jusqu'à 6 photos de vos produits</Text>
             <PhotoPicker onPhotosChange={setPhotos} maxPhotos={6} />
 
+            {errorMsg ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{errorMsg}</Text>
+              </View>
+            ) : null}
+
             <TouchableOpacity
               style={[styles.submitBtn, saving && styles.submitBtnDisabled]}
               onPress={handleSubmit}
@@ -317,6 +342,8 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: Colors.secondary, borderRadius: 10, padding: 18, alignItems: 'center', marginTop: 24 },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  errorBox: { backgroundColor: '#FEE2E2', borderRadius: 10, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#FECACA' },
+  errorText: { color: '#DC2626', fontSize: 14 },
   instagramRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   instagramPrefix: { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, borderRightWidth: 0, borderTopLeftRadius: 10, borderBottomLeftRadius: 10, padding: 14, justifyContent: 'center' },
   instagramAt: { color: Colors.textSecondary, fontSize: 16, fontWeight: 'bold' },
