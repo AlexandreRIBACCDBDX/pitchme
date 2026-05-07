@@ -74,8 +74,11 @@ export default function Login() {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <AppLogo size={72} />
-          <Text style={styles.title}>PitchMe</Text>
+          <AppLogo size={80} />
+          <View style={styles.wordmark}>
+            <Text style={styles.wordmarkBold}>Pitch</Text>
+            <Text style={styles.wordmarkLight}>Me</Text>
+          </View>
           <Text style={styles.subtitle}>Marché de Noël · Bourg-sur-Gironde</Text>
           <Text style={styles.tagline}>Espace Candidat</Text>
         </View>
@@ -139,7 +142,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   scroll: { flexGrow: 1, padding: 20 },
   header: { alignItems: 'center', paddingVertical: 40 },
-  title: { fontSize: 28, fontWeight: 'bold', color: Colors.primary, textAlign: 'center', marginTop: 12 },
+  wordmark:      { flexDirection: 'row', alignItems: 'baseline', marginTop: 14 },
+  wordmarkBold:  { fontSize: 30, fontWeight: '800', color: '#1A202C' },
+  wordmarkLight: { fontSize: 30, fontWeight: '300', color: Colors.primary },
   subtitle: { fontSize: 15, color: Colors.textSecondary, marginTop: 4 },
   tagline: { fontSize: 12, color: Colors.textMuted, marginTop: 8, letterSpacing: 2, textTransform: 'uppercase' },
   card: { backgroundColor: Colors.card, borderRadius: 16, padding: 24, borderWidth: 1, borderColor: Colors.border },

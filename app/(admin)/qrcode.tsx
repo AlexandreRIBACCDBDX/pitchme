@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import QRCode from 'react-native-qrcode-svg';
 import Constants from 'expo-constants';
 import { Colors } from '@/constants/theme';
+import AppLogo from '@/components/AppLogo';
 
 const PROD_URL = 'https://pitchme.app/apply';
 
@@ -40,8 +41,14 @@ export default function QRCodeScreen() {
 
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.qrCard}>
-          <Text style={styles.qrTitle}>PitchMe</Text>
-          <Text style={styles.qrSubtitle}>🎄 Marché de Noël · Bourg-sur-Gironde 2025</Text>
+          <View style={styles.qrLogoRow}>
+            <AppLogo size={52} />
+            <View style={styles.qrWordmark}>
+              <Text style={styles.qrTitleBold}>Pitch</Text>
+              <Text style={styles.qrTitleLight}>Me</Text>
+            </View>
+          </View>
+          <Text style={styles.qrSubtitle}>Marché de Noël · Bourg-sur-Gironde 2025</Text>
 
           <View style={styles.qrContainer}>
             <QRCode
@@ -113,8 +120,11 @@ const styles = StyleSheet.create({
   title: { color: Colors.text, fontSize: 18, fontWeight: 'bold' },
   content: { padding: 24, gap: 16 },
   qrCard: { backgroundColor: Colors.card, borderRadius: 20, padding: 30, alignItems: 'center', borderWidth: 1, borderColor: Colors.border },
-  qrTitle: { fontSize: 24, fontWeight: 'bold', color: Colors.primary, marginBottom: 4 },
-  qrSubtitle: { fontSize: 14, color: Colors.textSecondary, marginBottom: 24 },
+  qrLogoRow:    { alignItems: 'center', marginBottom: 8 },
+  qrWordmark:   { flexDirection: 'row', alignItems: 'baseline', marginTop: 10 },
+  qrTitleBold:  { fontSize: 26, fontWeight: '800', color: '#1A202C' },
+  qrTitleLight: { fontSize: 26, fontWeight: '300', color: Colors.primary },
+  qrSubtitle:   { fontSize: 14, color: Colors.textSecondary, marginBottom: 24 },
   qrContainer: { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 16, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
   qrHint: { fontSize: 14, color: Colors.textSecondary },
   urlCard: { backgroundColor: Colors.card, borderRadius: 16, padding: 20, borderWidth: 1, borderColor: Colors.border },

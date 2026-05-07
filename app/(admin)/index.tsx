@@ -7,6 +7,7 @@ import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Colors, StatusColors, StatusLabels } from '@/constants/theme';
+import AppLogo from '@/components/AppLogo';
 
 const SECTIONS = [
   { key: 'pending',   title: 'EN ATTENTE DE VALIDATION', border: '#EF4444', actions: ['reviewing', 'rejected'] },
@@ -30,11 +31,30 @@ export default function AdminDashboard() {
   const { signOut } = useAuth();
   const [candidatures, setCandidatures] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<any>(null);
   const [updating, setUpdating] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [lastUpdated, setLastUpdated] = useState('');
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+
+    const channel = supabase
+      .channel('admin-candidatures-rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'candidatures' }, () => {
+        load();
+      })
+      .subscribe((status) => {
+        setRealtimeStatus(
+          status === 'SUBSCRIBED'    ? 'connected'  :
+          status === 'CHANNEL_ERROR' ? 'error'       : 'connecting'
+        );
+      });
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   async function load() {
     const { data } = await supabase
@@ -43,9 +63,16 @@ export default function AdminDashboard() {
       .order('created_at', { ascending: false });
     if (data) {
       setCandidatures(data);
-      if (selected) setSelected((s: any) => data.find(c => c.id === s.id) ?? null);
+      setSelected((s: any) => s ? (data.find(c => c.id === s.id) ?? null) : null);
     }
+    setLastUpdated(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
+    setRefreshing(false);
+  }
+
+  async function manualRefresh() {
+    setRefreshing(true);
+    await load();
   }
 
   async function updateStatus(id: string, status: string) {
@@ -83,7 +110,13 @@ export default function AdminDashboard() {
       {/* ── Sidebar ── */}
       <View style={styles.sidebar}>
         <View style={styles.sidebarTop}>
-          <Text style={styles.appTitle}>PitchMe</Text>
+          <View style={styles.logoRow}>
+            <AppLogo size={36} />
+            <View style={styles.sidebarWordmark}>
+              <Text style={styles.appTitleBold}>Pitch</Text>
+              <Text style={styles.appTitleLight}>Me</Text>
+            </View>
+          </View>
           <Text style={styles.appSub}>Marché de Noël · Bourg-sur-Gironde</Text>
         </View>
 
@@ -98,8 +131,30 @@ export default function AdminDashboard() {
         <TouchableOpacity style={styles.sidebarBtn} onPress={() => router.push('/(admin)/qrcode')}>
           <Text style={styles.sidebarBtnText}>📱 QR Code candidature</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={styles.sidebarBtn} onPress={() => router.push('/(admin)/modules')}>
+          <Text style={styles.sidebarBtnText}>⚙️ Modules</Text>
+        </TouchableOpacity>
 
         <View style={{ flex: 1 }} />
+
+        {/* ── Realtime status + manual refresh ── */}
+        <View style={styles.realtimeBar}>
+          <View style={[styles.realtimeDot, {
+            backgroundColor:
+              realtimeStatus === 'connected'  ? '#10B981' :
+              realtimeStatus === 'error'      ? '#EF4444' : '#F59E0B',
+          }]} />
+          <Text style={styles.realtimeText}>
+            {realtimeStatus === 'connected'  ? 'Temps réel' :
+             realtimeStatus === 'error'      ? 'Hors ligne' : 'Connexion…'}
+          </Text>
+          <TouchableOpacity onPress={manualRefresh} disabled={refreshing} style={styles.refreshBtn}>
+            <Text style={[styles.refreshIcon, refreshing && { opacity: 0.35 }]}>↻</Text>
+          </TouchableOpacity>
+        </View>
+        {lastUpdated ? (
+          <Text style={styles.lastUpdated}>Mis à jour à {lastUpdated}</Text>
+        ) : null}
         <TouchableOpacity style={styles.signOutBtn} onPress={signOut}>
           <Text style={styles.signOutText}>⏏  Déconnexion</Text>
         </TouchableOpacity>
@@ -196,7 +251,7 @@ export default function AdminDashboard() {
               </Text>
             </View>
             <Text style={styles.detailName}>{selected.business_name}</Text>
-            <Text style={styles.detailSub}>{selected.product_category} · stand {selected.stand_size}</Text>
+            <Text style={styles.detailSub}>{selected.product_category}{selected.candidature_type === 'foodtruck' ? ' · Food Truck' : ''}</Text>
             <View style={[styles.statusBadge, { backgroundColor: STATUS_BG[selected.status], alignSelf: 'center', marginTop: 6 }]}>
               <Text style={[styles.statusText, { color: StatusColors[selected.status] }]}>
                 {StatusLabels[selected.status]}
@@ -239,8 +294,7 @@ export default function AdminDashboard() {
               <Text style={styles.detailDesc}>{selected.product_description}</Text>
             </DetailBlock>
 
-            <DetailBlock title="STAND & LOGISTIQUE">
-              <DetailRow label="Taille" value={selected.stand_size ?? '—'} />
+            <DetailBlock title="LOGISTIQUE">
               <DetailRow label="Électricité" value={selected.electricity_needed ? 'Oui' : 'Non'} />
               <DetailRow label="Ancien exposant" value={selected.previous_participant ? 'Oui' : 'Non'} />
             </DetailBlock>
@@ -302,7 +356,10 @@ const styles = StyleSheet.create({
   // Sidebar
   sidebar:            { width: 220, backgroundColor: '#FFFFFF', borderRightWidth: 1, borderRightColor: '#E2E8F0', paddingVertical: 24, paddingHorizontal: 16, flexDirection: 'column' },
   sidebarTop:         { marginBottom: 28 },
-  appTitle:           { fontSize: 18, fontWeight: 'bold', color: Colors.primary },
+  logoRow:            { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
+  sidebarWordmark:    { flexDirection: 'row', alignItems: 'baseline' },
+  appTitleBold:       { fontSize: 20, fontWeight: '800', color: '#1A202C' },
+  appTitleLight:      { fontSize: 20, fontWeight: '300', color: Colors.primary },
   appSub:             { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
   sidebarLabel:       { fontSize: 10, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1, marginBottom: 10 },
   sidebarItem:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 7 },
@@ -313,6 +370,12 @@ const styles = StyleSheet.create({
   sidebarBtnText:     { fontSize: 12, color: Colors.text },
   signOutBtn:         { paddingVertical: 10, paddingHorizontal: 8, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 8 },
   signOutText:        { fontSize: 13, color: Colors.textSecondary },
+  realtimeBar:        { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 4 },
+  realtimeDot:        { width: 8, height: 8, borderRadius: 4 },
+  realtimeText:       { flex: 1, fontSize: 11, color: Colors.textSecondary },
+  refreshBtn:         { padding: 4 },
+  refreshIcon:        { fontSize: 16, color: Colors.primary, fontWeight: 'bold' },
+  lastUpdated:        { fontSize: 9, color: Colors.textMuted, marginBottom: 6 },
 
   // Main
   main:               { flex: 1 },

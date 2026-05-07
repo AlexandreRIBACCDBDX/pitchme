@@ -29,7 +29,6 @@ export default function CandidatureForm() {
     productDescription: '',
     websiteUrl: '',
     instagramUrl: '',
-    standSize: '3m',
     electricityNeeded: false,
     previousParticipant: false,
   });
@@ -40,7 +39,11 @@ export default function CandidatureForm() {
   }, []);
 
   async function loadExisting() {
-    const { data } = await supabase.from('candidatures').select('*').limit(1).maybeSingle() as any;
+    const { data } = await (supabase.from('candidatures') as any)
+      .select('*')
+      .or('candidature_type.eq.market,candidature_type.is.null')
+      .limit(1)
+      .maybeSingle();
     if (data) {
       setExistingId(data.id);
       setForm({
@@ -54,7 +57,6 @@ export default function CandidatureForm() {
         productDescription: data.product_description || '',
         websiteUrl: data.website_url || '',
         instagramUrl: (data as any).instagram_url || '',
-        standSize: data.stand_size || '3m',
         electricityNeeded: data.electricity_needed || false,
         previousParticipant: data.previous_participant || false,
       });
@@ -128,7 +130,6 @@ export default function CandidatureForm() {
         product_description: form.productDescription,
         website_url: form.websiteUrl || null,
         instagram_url: form.instagramUrl || null,
-        stand_size: form.standSize,
         electricity_needed: form.electricityNeeded,
         previous_participant: form.previousParticipant,
       };
@@ -257,20 +258,7 @@ export default function CandidatureForm() {
               />
             </View>
 
-            <Text style={styles.sectionTitle}>📐 Stand & logistique</Text>
-
-            <Text style={styles.label}>Taille du stand souhaitée</Text>
-            <View style={styles.standRow}>
-              {['3m', '6m', '9m'].map(size => (
-                <TouchableOpacity
-                  key={size}
-                  style={[styles.standBtn, form.standSize === size && styles.standBtnActive]}
-                  onPress={() => update('standSize', size)}
-                >
-                  <Text style={[styles.standBtnText, form.standSize === size && styles.standBtnTextActive]}>{size}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+            <Text style={styles.sectionTitle}>📐 Logistique</Text>
 
             <View style={styles.switchRow}>
               <Text style={styles.switchLabel}>Besoin d'électricité</Text>

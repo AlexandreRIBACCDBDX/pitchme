@@ -6,6 +6,7 @@ export default function AdminLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="candidature/[id]" />
       <Stack.Screen name="qrcode" />
+      <Stack.Screen name="modules" />
     </Stack>
   );
 }
