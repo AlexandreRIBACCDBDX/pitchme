@@ -40,26 +40,22 @@ export default function Login() {
         return;
       }
 
-      // Fetch profile to determine role — fallback to candidate if fetch fails
+      // Fetch profile to determine role — 5 s timeout so the spinner never hangs
       let role = 'candidate';
       try {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', data.user.id)
-          .maybeSingle();
-
-        if (!profile) {
-          await (supabase.from('profiles') as any).insert({
-            id: data.user.id,
-            email: data.user.email ?? '',
-            role: 'candidate',
-          });
-        } else {
-          role = profile.role;
-        }
+        await Promise.race([
+          (async () => {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('role')
+              .eq('id', data.user.id)
+              .maybeSingle();
+            if (profile?.role) role = profile.role;
+          })(),
+          new Promise<void>(resolve => setTimeout(resolve, 5000)),
+        ]);
       } catch {
-        // profile fetch failed — default role already 'candidate'
+        // network error — default role already 'candidate'
       }
 
       router.replace(role === 'admin' ? '/(admin)' : '/(candidate)');

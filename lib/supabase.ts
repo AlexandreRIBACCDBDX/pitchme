@@ -19,7 +19,7 @@ const CHUNK = 3600; // safe margin below the 4 096-byte cookie limit
 const ONE_YEAR = 365 * 24 * 60 * 60 * 1000;
 
 function cookieName(key: string) {
-  return 'sb_' + key.replace(/[^a-zA-Z0-9]/g, '_');
+  return key.replace(/[^a-zA-Z0-9]/g, '_');
 }
 
 function parseCookies(): Record<string, string> {

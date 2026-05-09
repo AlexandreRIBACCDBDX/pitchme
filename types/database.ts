@@ -21,19 +21,26 @@ export interface Database {
         Row: {
           id: string;
           user_id: string;
+          candidature_type: 'market' | 'foodtruck' | null;
           business_name: string;
           siret: string;
           siret_data: Json | null;
           address: string;
           city: string;
           postal_code: string;
-          product_category: string;
+          product_category: string | null;
           product_description: string;
           website_url: string | null;
           instagram_url: string | null;
           stand_size: string | null;
           electricity_needed: boolean;
           previous_participant: boolean;
+          // food truck specific
+          truck_description: string | null;
+          truck_length_m: number | null;
+          generator_ok: boolean | null;
+          water_autonomy: boolean | null;
+          cuisine_type: string | null;
           status: 'pending' | 'reviewing' | 'accepted' | 'rejected';
           admin_notes: string | null;
           rejection_reason: string | null;

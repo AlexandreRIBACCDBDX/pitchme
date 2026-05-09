@@ -38,7 +38,7 @@ export default function CandidateDashboard() {
     load();
 
     const channel = supabase
-      .channel('candidate-candidatures-rt')
+      .channel(`candidate-rt-${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'candidatures' }, () => {
         load();
       })
@@ -70,8 +70,7 @@ export default function CandidateDashboard() {
     if (cands?.length && userId) {
       const counts: Record<string, number> = {};
       await Promise.all(cands.map(async c => {
-        const { count } = await supabase
-          .from('messages')
+        const { count } = await (supabase.from('messages') as any)
           .select('*', { count: 'exact', head: true })
           .eq('candidature_id', c.id)
           .eq('is_read', false)

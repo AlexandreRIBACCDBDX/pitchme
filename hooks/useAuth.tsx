@@ -24,39 +24,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Safety timeout — if auth resolution takes over 6s, unblock the UI
-    const timeout = setTimeout(() => {
-      setLoading(false);
-    }, 6000);
+    // Safety net: if onAuthStateChange never fires (Supabase init hang), unblock after 8s
+    const safetyTimeout = setTimeout(() => setLoading(false), 8000);
 
-    async function init() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchProfile(session.user.id);
-        } else {
-          setLoading(false);
-        }
-      } catch (e) {
-        console.error('[Auth] getSession failed:', e);
-        // Fallback: try to recover user from localStorage directly so a network
-        // hiccup (e.g. corporate SSL proxy) doesn't log the user out on F5.
-        const recovered = recoverUserFromStorage();
-        if (recovered) {
-          setUser(recovered);
-          await fetchProfile(recovered.id);
-        } else {
-          setLoading(false);
-        }
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-
-    init();
-
+    // onAuthStateChange fires INITIAL_SESSION on startup (reads localStorage — no network call).
+    // It is the single source of truth; no separate init() needed.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      clearTimeout(safetyTimeout);
       setUser(session?.user ?? null);
       if (session?.user) {
         await fetchProfile(session.user.id);
@@ -66,19 +40,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(safetyTimeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function fetchProfile(userId: string) {
+    // Per-call safety timer so a hanging network request can't block the UI forever
+    const safetyTimer = setTimeout(() => setLoading(false), 8000);
     try {
-      const { data } = await supabase
-        .from('profiles')
+      const { data } = await (supabase.from('profiles') as any)
         .select('*')
         .eq('id', userId)
         .maybeSingle();
 
       if (data) {
-        setProfile(data);
+        setProfile(data as any);
         return;
       }
 
@@ -99,11 +77,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .select()
         .maybeSingle();
 
-      // Whether insert succeeded or not, set a usable profile
       setProfile(created ?? { ...newProfile, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     } catch (e) {
       console.error('[Auth] fetchProfile failed:', e);
-      // Last resort: build profile from JWT metadata so the app stays usable
       try {
         const { data: { user: u } } = await supabase.auth.getUser();
         const meta = u?.user_metadata ?? {};
@@ -119,6 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
       } catch {}
     } finally {
+      clearTimeout(safetyTimer);
       setLoading(false);
     }
   }
@@ -137,20 +114,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   return useContext(AuthContext);
-}
-
-// Read the Supabase user from localStorage without making any network call.
-// Used as a last-resort fallback when getSession() throws (e.g. proxy errors).
-function recoverUserFromStorage(): any | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const key = Object.keys(window.localStorage).find(k => k.startsWith('sb-') && k.endsWith('-auth-token'));
-    if (!key) return null;
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed?.user ?? null;
-  } catch {
-    return null;
-  }
 }

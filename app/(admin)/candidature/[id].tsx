@@ -37,7 +37,7 @@ export default function AdminCandidatureDetail() {
   async function loadData() {
     const [{ data: cand }, { data: docs }] = await Promise.all([
       (supabase.from('candidatures') as any).select('*, profiles(*)').eq('id', id).single(),
-      supabase.from('documents').select('*').eq('candidature_id', id),
+      (supabase.from('documents') as any).select('*').eq('candidature_id', id),
     ]);
     if (cand) { setData(cand); setNotes(cand.admin_notes || ''); setRejectReason(cand.rejection_reason || ''); }
     if (docs) setDocs(docs);
@@ -92,7 +92,11 @@ export default function AdminCandidatureDetail() {
 
         <View style={styles.topBarCenter}>
           <Text style={styles.topBarTitle}>{data.business_name}</Text>
-          <Text style={styles.topBarSub}>{p?.first_name} {p?.last_name} · Déposée le {new Date(data.created_at).toLocaleDateString('fr-FR')}</Text>
+          <Text style={styles.topBarSub}>
+            {p?.first_name} {p?.last_name}
+            {data.candidature_type === 'foodtruck' ? ' · 🚚 Food Truck' : ''}
+            {' · '}Déposée le {new Date(data.created_at).toLocaleDateString('fr-FR')}
+          </Text>
         </View>
 
         <View style={[styles.statusPill, { backgroundColor: STATUS_BG[data.status] }]}>
@@ -154,22 +158,50 @@ export default function AdminCandidatureDetail() {
                 </Card>
               </Row2>
 
-              <Card title="Produits & activité">
-                <Field label="Catégorie" value={data.product_category} />
-                {data.website_url   && <Field label="Site web"  value={data.website_url} />}
-                {data.instagram_url && <Field label="Instagram" value={`@${data.instagram_url}`} />}
-                <View style={styles.descBlock}>
-                  <Text style={styles.fieldLabel}>Description</Text>
-                  <Text style={styles.descText}>{data.product_description}</Text>
-                </View>
-              </Card>
+              {data.candidature_type === 'foodtruck' ? (
+                <Card title="Menu & Cuisine">
+                  {data.cuisine_type  && <Field label="Type de cuisine" value={data.cuisine_type} />}
+                  {data.website_url   && <Field label="Site web"        value={data.website_url} />}
+                  {data.instagram_url && <Field label="Instagram"       value={`@${data.instagram_url}`} />}
+                  <View style={styles.descBlock}>
+                    <Text style={styles.fieldLabel}>Menu proposé</Text>
+                    <Text style={styles.descText}>{data.product_description}</Text>
+                  </View>
+                </Card>
+              ) : (
+                <Card title="Produits & activité">
+                  <Field label="Catégorie" value={data.product_category} />
+                  {data.website_url   && <Field label="Site web"  value={data.website_url} />}
+                  {data.instagram_url && <Field label="Instagram" value={`@${data.instagram_url}`} />}
+                  <View style={styles.descBlock}>
+                    <Text style={styles.fieldLabel}>Description</Text>
+                    <Text style={styles.descText}>{data.product_description}</Text>
+                  </View>
+                </Card>
+              )}
 
               <Row2>
+                {data.candidature_type === 'foodtruck' ? (
+                  <Card title="Camion & logistique">
+                    {data.truck_description && (
+                      <View style={styles.descBlock}>
+                        <Text style={styles.fieldLabel}>Description du camion</Text>
+                        <Text style={styles.descText}>{data.truck_description}</Text>
+                      </View>
+                    )}
+                    {data.truck_length_m != null && <Field label="Longueur" value={`${data.truck_length_m} m`} />}
+                    <Field label="Groupe électrogène" value={data.generator_ok  ? 'Oui' : 'Non'} />
+                    <Field label="Autonomie en eau"   value={data.water_autonomy ? 'Oui' : 'Non'} />
+                    <Field label="Électricité externe" value={data.electricity_needed ? 'Requise' : 'Non requise'} />
+                    <Field label="Ancien exposant"    value={data.previous_participant ? 'Oui' : 'Non'} />
+                  </Card>
+                ) : (
                 <Card title="Stand & logistique">
                   <Field label="Taille du stand"  value={data.stand_size ?? '—'} />
                   <Field label="Électricité"       value={data.electricity_needed ? 'Oui' : 'Non'} />
                   <Field label="Ancien exposant"   value={data.previous_participant ? 'Oui' : 'Non'} />
                 </Card>
+                )}
                 <Card title="Notes internes">
                   <TextInput
                     style={styles.notesInput}
@@ -232,7 +264,11 @@ export default function AdminCandidatureDetail() {
               <Text style={[styles.avatarLetter, { color: statusColor }]}>{initials}</Text>
             </View>
             <Text style={styles.heroName}>{data.business_name}</Text>
-            <Text style={styles.heroSub}>{data.product_category}</Text>
+            <Text style={styles.heroSub}>
+              {data.candidature_type === 'foodtruck'
+                ? `🚚 Food Truck${data.cuisine_type ? ' · ' + data.cuisine_type : ''}`
+                : data.product_category}
+            </Text>
           </View>
 
           {/* Action buttons */}
@@ -264,8 +300,19 @@ export default function AdminCandidatureDetail() {
           {/* Key info */}
           <View style={styles.sideInfoBox}>
             <SideRow icon="🗓" label="Déposée" value={new Date(data.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })} />
-            <SideRow icon="📐" label="Stand"   value={data.stand_size ?? '—'} />
-            <SideRow icon="⚡" label="Électricité" value={data.electricity_needed ? 'Oui' : 'Non'} />
+            {data.candidature_type === 'foodtruck' ? (
+              <>
+                {data.cuisine_type    && <SideRow icon="🍽" label="Cuisine"        value={data.cuisine_type} />}
+                {data.truck_length_m != null && <SideRow icon="📏" label="Longueur" value={`${data.truck_length_m} m`} />}
+                <SideRow icon="⚡" label="Groupe élec."  value={data.generator_ok   ? 'Oui' : 'Non'} />
+                <SideRow icon="💧" label="Eau autonome" value={data.water_autonomy ? 'Oui' : 'Non'} />
+              </>
+            ) : (
+              <>
+                <SideRow icon="📐" label="Stand"       value={data.stand_size ?? '—'} />
+                <SideRow icon="⚡" label="Électricité" value={data.electricity_needed ? 'Oui' : 'Non'} />
+              </>
+            )}
             <SideRow icon="🔁" label="Ancien exposant" value={data.previous_participant ? 'Oui' : 'Non'} />
             {data.instagram_url && <SideRow icon="📸" label="Instagram" value={`@${data.instagram_url}`} />}
           </View>

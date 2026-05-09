@@ -11,10 +11,10 @@ import AppLogo from '@/components/AppLogo';
 
 const SECTIONS = [
   { key: 'pending',   title: 'EN ATTENTE DE VALIDATION', border: '#EF4444', actions: ['reviewing', 'rejected'] },
-  { key: 'reviewing', title: "EN COURS D'ÉTUDE",          border: '#F59E0B', actions: ['accepted', 'rejected'] },
-  { key: 'accepted',  title: 'RETENUS',                   border: '#10B981', numbered: true },
-  { key: 'rejected',  title: 'REFUSÉS',                   border: '#9CA3AF' },
-] as const;
+  { key: 'reviewing', title: "EN COURS D'ÉTUDE",          border: '#F59E0B', actions: ['accepted', 'rejected'], rollback: 'pending' },
+  { key: 'accepted',  title: 'RETENUS',                   border: '#10B981', numbered: true, rollback: 'reviewing' },
+  { key: 'rejected',  title: 'REFUSÉS',                   border: '#9CA3AF', rollback: 'pending' },
+];
 
 const STATUS_BG: Record<string, string> = {
   pending: '#FEF2F2', reviewing: '#FFFBEB', accepted: '#ECFDF5', rejected: '#F9FAFB',
@@ -26,6 +26,11 @@ const ACTION_LABEL: Record<string, string> = {
 const ACTION_COLOR: Record<string, string> = {
   reviewing: '#F59E0B', accepted: '#10B981', rejected: '#EF4444',
 };
+
+const ROLLBACK_LABEL: Record<string, string> = {
+  pending: '↩ Attente', reviewing: '↩ Étude',
+};
+const ROLLBACK_COLOR = '#94A3B8';
 
 export default function AdminDashboard() {
   const { signOut } = useAuth();
@@ -63,7 +68,7 @@ export default function AdminDashboard() {
       .order('created_at', { ascending: false });
     if (data) {
       setCandidatures(data);
-      setSelected((s: any) => s ? (data.find(c => c.id === s.id) ?? null) : null);
+      setSelected((s: any) => s ? ((data as any[]).find((c: any) => c.id === s.id) ?? null) : null);
     }
     setLastUpdated(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
@@ -215,20 +220,27 @@ export default function AdminDashboard() {
                         {StatusLabels[item.status]}
                       </Text>
                     </View>
-                    {'actions' in section && section.actions && (
-                      <View style={styles.actionRow}>
-                        {section.actions.map((a: string) => (
-                          <TouchableOpacity
-                            key={a}
-                            style={[styles.actionBtn, { backgroundColor: ACTION_COLOR[a] }]}
-                            onPress={e => { e.stopPropagation?.(); updateStatus(item.id, a); }}
-                            disabled={updating}
-                          >
-                            <Text style={styles.actionBtnText}>{ACTION_LABEL[a]}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
+                    <View style={styles.actionRow}>
+                      {'actions' in section && (section.actions as string[]).map((a: string) => (
+                        <TouchableOpacity
+                          key={a}
+                          style={[styles.actionBtn, { backgroundColor: ACTION_COLOR[a] }]}
+                          onPress={e => { e.stopPropagation?.(); updateStatus(item.id, a); }}
+                          disabled={updating}
+                        >
+                          <Text style={styles.actionBtnText}>{ACTION_LABEL[a]}</Text>
+                        </TouchableOpacity>
+                      ))}
+                      {'rollback' in section && (
+                        <TouchableOpacity
+                          style={[styles.actionBtn, { backgroundColor: ROLLBACK_COLOR }]}
+                          onPress={e => { e.stopPropagation?.(); updateStatus(item.id, (section as any).rollback); }}
+                          disabled={updating}
+                        >
+                          <Text style={styles.actionBtnText}>{ROLLBACK_LABEL[(section as any).rollback]}</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
                 </TouchableOpacity>
               ))}
@@ -261,6 +273,7 @@ export default function AdminDashboard() {
 
           {/* Quick action buttons */}
           <View style={styles.detailBtns}>
+            {/* Forward actions */}
             {selected.status === 'pending' && (
               <QuickBtn label="→ Mettre en étude" color="#F59E0B" onPress={() => updateStatus(selected.id, 'reviewing')} disabled={updating} />
             )}
@@ -270,8 +283,15 @@ export default function AdminDashboard() {
                 <QuickBtn label="✗ Refuser" color="#EF4444" onPress={() => updateStatus(selected.id, 'rejected')} disabled={updating} />
               </>
             )}
+            {/* Rollback actions */}
+            {selected.status === 'reviewing' && (
+              <QuickBtn label="↩ Remettre en attente" color={ROLLBACK_COLOR} onPress={() => updateStatus(selected.id, 'pending')} disabled={updating} />
+            )}
+            {selected.status === 'accepted' && (
+              <QuickBtn label="↩ Remettre en étude" color={ROLLBACK_COLOR} onPress={() => updateStatus(selected.id, 'reviewing')} disabled={updating} />
+            )}
             {selected.status === 'rejected' && (
-              <QuickBtn label="↩ Remettre en attente" color="#F59E0B" onPress={() => updateStatus(selected.id, 'pending')} disabled={updating} />
+              <QuickBtn label="↩ Remettre en attente" color={ROLLBACK_COLOR} onPress={() => updateStatus(selected.id, 'pending')} disabled={updating} />
             )}
             <QuickBtn label="Dossier complet →" color={Colors.primary} onPress={() => router.push(`/(admin)/candidature/${selected.id}`)} />
           </View>
