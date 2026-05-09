@@ -7,6 +7,7 @@ import { Colors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
 
 const PROD_URL = 'https://pitchme.app/apply';
+const STORAGE_KEY = 'pitchme_qr_custom_url';
 
 function getDevUrl() {
   const host = Constants.expoConfig?.hostUri;
@@ -20,6 +21,24 @@ export default function QRCodeScreen() {
   const devUrl = getDevUrl();
   const defaultUrl = devUrl || PROD_URL;
   const activeUrl = customUrl || defaultUrl;
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (saved) setCustomUrl(saved);
+    } catch {}
+  }, []);
+
+  function confirmUrl() {
+    try {
+      if (customUrl.trim()) {
+        window.localStorage.setItem(STORAGE_KEY, customUrl.trim());
+      } else {
+        window.localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch {}
+    setEditingUrl(false);
+  }
 
   async function handleShare() {
     await Share.share({
@@ -55,7 +74,7 @@ export default function QRCodeScreen() {
               value={activeUrl}
               size={220}
               backgroundColor="#FFFFFF"
-              color="#1D4ED8"
+              color="#000000"
             />
           </View>
 
@@ -76,7 +95,7 @@ export default function QRCodeScreen() {
                 autoCapitalize="none"
                 keyboardType="url"
               />
-              <TouchableOpacity style={styles.urlSaveBtn} onPress={() => setEditingUrl(false)}>
+              <TouchableOpacity style={styles.urlSaveBtn} onPress={confirmUrl}>
                 <Text style={styles.urlSaveBtnText}>OK</Text>
               </TouchableOpacity>
             </View>
