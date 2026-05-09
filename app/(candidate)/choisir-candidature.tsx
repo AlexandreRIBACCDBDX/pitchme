@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
@@ -30,7 +30,7 @@ export default function ChoisirCandidature() {
   }
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
         <Text style={styles.backText}>← Retour</Text>
       </TouchableOpacity>
@@ -73,13 +73,14 @@ export default function ChoisirCandidature() {
           )}
         </TouchableOpacity>
       </View>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   centered:    { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background },
-  container:   { flex: 1, backgroundColor: Colors.background, padding: 24, paddingTop: 60 },
+  container:   { flex: 1, backgroundColor: Colors.background },
+  content:     { padding: 24, paddingTop: 60, paddingBottom: 48 },
   backBtn:     { marginBottom: 32 },
   backText:    { color: Colors.textSecondary, fontSize: 16 },
   title:       { fontSize: 26, fontWeight: 'bold', color: Colors.text, marginBottom: 8 },
