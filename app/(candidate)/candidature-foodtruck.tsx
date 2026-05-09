@@ -29,6 +29,7 @@ export default function CandidatureFoodtruck() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [step, setStep] = useState(1);
+  const [siretChecking, setSiretChecking] = useState(false);
   const [photos, setPhotos] = useState<any[]>([]);
 
   const [form, setForm] = useState({
@@ -118,6 +119,8 @@ export default function CandidatureFoodtruck() {
   function validateStep1() {
     if (!form.businessName) return 'Nom du commerce requis';
     if (!form.siret || form.siret.replace(/\s/g, '').length !== 14) return 'SIRET invalide (14 chiffres requis)';
+    if (siretChecking) return 'Vérification SIRET en cours…';
+    if (!form.siretData) return 'SIRET non vérifié — vérification automatique en cours';
     if (!form.address || !form.city || !form.postalCode) return 'Adresse complète requise';
     return null;
   }
@@ -258,10 +261,11 @@ export default function CandidatureFoodtruck() {
               onChange={v => update('siret', v)}
               onVerified={data => {
                 update('siretData', data);
-                if (data.adresse)     update('address',    data.adresse);
-                if (data.code_postal) update('postalCode', data.code_postal);
-                if (data.ville)       update('city',       data.ville);
+                if (data?.adresse)     update('address',    data.adresse);
+                if (data?.code_postal) update('postalCode', data.code_postal);
+                if (data?.ville)       update('city',       data.ville);
               }}
+              onLoadingChange={setSiretChecking}
             />
 
             <Text style={[styles.label, { marginTop: 16 }]}>Adresse *</Text>
