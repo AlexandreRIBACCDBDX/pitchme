@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
+  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
+import PhotoPicker from '@/components/PhotoPicker';
 
 const STATUS_CONFIG: Record<string, { icon: string; bg: string; tint: string; label: string; hint: string }> = {
   pending:   { icon: '⏳', bg: '#FEF3C7', tint: '#D97706', label: 'En attente',        hint: "Votre dossier est bien reçu et attend d'être lu par l'équipe organisatrice." },
@@ -37,6 +38,12 @@ export default function MonEspace() {
   const [reply, setReply] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const [replyError, setReplyError] = useState('');
+
+  const [newPhotos, setNewPhotos] = useState<any[]>([]);
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const [photoUploadError, setPhotoUploadError] = useState('');
+  const [photoUploadSuccess, setPhotoUploadSuccess] = useState(false);
+  const [photoPickerKey, setPhotoPickerKey] = useState(0);
 
   function formatCode(raw: string) {
     const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -75,6 +82,59 @@ export default function MonEspace() {
       setError(e?.message ?? 'Erreur réseau. Vérifiez votre connexion.');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handlePhotoUpload() {
+    if (newPhotos.length === 0) return;
+    const cleaned = code.replace(/\s/g, '');
+    setUploadingPhotos(true);
+    setPhotoUploadError('');
+    setPhotoUploadSuccess(false);
+    try {
+      const mimeMap: Record<string, string> = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+        webp: 'image/webp', heic: 'image/heic',
+      };
+      const urls: string[] = [];
+      for (const photo of newPhotos) {
+        try {
+          const rawExt = (photo.name ?? '').split('.').pop()?.toLowerCase() || 'jpg';
+          const ext = rawExt === 'jpg' ? 'jpeg' : rawExt;
+          const mime = mimeMap[rawExt] ?? 'image/jpeg';
+          const path = `${candidature.id}/${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
+          const response = await fetch(photo.uri);
+          const blob = await response.blob();
+          const { data: uploadData, error: storageError } = await supabase.storage
+            .from('product-photos').upload(path, blob, { contentType: mime });
+          if (storageError) { console.warn('[Photo upload]', storageError.message); continue; }
+          if (uploadData) {
+            const { data: { publicUrl } } = supabase.storage.from('product-photos').getPublicUrl(path);
+            urls.push(publicUrl);
+          }
+        } catch (e) { console.warn('[Photo exception]', e); }
+      }
+
+      if (urls.length === 0) {
+        setPhotoUploadError('Aucune photo n\'a pu être envoyée. Vérifiez votre connexion.');
+        return;
+      }
+
+      const { error: rpcError } = await supabase.rpc('add_photos_to_candidature', {
+        p_code: cleaned,
+        p_urls: urls,
+      });
+      if (rpcError) throw rpcError;
+
+      setCandidature((c: any) => ({ ...c, photo_urls: [...(c.photo_urls ?? []), ...urls] }));
+      setNewPhotos([]);
+      setPhotoPickerKey(k => k + 1);
+      setPhotoUploadSuccess(true);
+      setTimeout(() => setPhotoUploadSuccess(false), 4000);
+    } catch (e: any) {
+      setPhotoUploadError(e?.message ?? 'Erreur lors de l\'envoi des photos.');
+    } finally {
+      setUploadingPhotos(false);
     }
   }
 
@@ -209,6 +269,49 @@ export default function MonEspace() {
               </View>
             </View>
 
+            {/* ── Photos ── */}
+            <View style={styles.photosCard}>
+              <Text style={styles.photosCardTitle}>📷 Photos de votre dossier</Text>
+
+              {(candidature.photo_urls ?? []).length > 0 ? (
+                <View style={styles.photoGrid}>
+                  {(candidature.photo_urls as string[]).map((url, i) => (
+                    <Image key={i} source={{ uri: url }} style={styles.photoThumb} resizeMode="cover" />
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.noPhotosText}>Aucune photo pour l'instant.</Text>
+              )}
+
+              <View style={styles.addPhotosBox}>
+                <Text style={styles.addPhotosLabel}>Ajouter des photos</Text>
+                <Text style={styles.addPhotosHint}>Produits, stand, camion... jusqu'à 6 photos</Text>
+                <PhotoPicker key={photoPickerKey} onPhotosChange={setNewPhotos} maxPhotos={6} />
+                {photoUploadError ? (
+                  <View style={styles.uploadErrorBox}>
+                    <Text style={styles.uploadErrorText}>{photoUploadError}</Text>
+                  </View>
+                ) : null}
+                {photoUploadSuccess ? (
+                  <View style={styles.uploadSuccessBox}>
+                    <Text style={styles.uploadSuccessText}>✓ Photos ajoutées à votre dossier !</Text>
+                  </View>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.uploadBtn, (newPhotos.length === 0 || uploadingPhotos) && styles.uploadBtnDisabled]}
+                  onPress={handlePhotoUpload}
+                  disabled={newPhotos.length === 0 || uploadingPhotos}
+                >
+                  {uploadingPhotos
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={styles.uploadBtnText}>
+                        {newPhotos.length > 0 ? `Envoyer ${newPhotos.length} photo${newPhotos.length > 1 ? 's' : ''}` : 'Sélectionnez des photos'}
+                      </Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            </View>
+
             {/* ── Messages ── */}
             <View style={styles.messagesCard}>
               <View style={styles.messagesHeader}>
@@ -325,6 +428,23 @@ const styles = StyleSheet.create({
   codeReminder: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 14, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.surface },
   codeReminderText: { color: Colors.textMuted, fontSize: 12 },
   codeReminderCode: { color: Colors.text, fontSize: 13, fontWeight: 'bold', letterSpacing: 2 },
+
+  // Photos
+  photosCard:        { backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', marginBottom: 16 },
+  photosCardTitle:   { fontSize: 16, fontWeight: 'bold', color: Colors.text, padding: 18, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  photoGrid:         { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 16 },
+  photoThumb:        { width: '31%', aspectRatio: 1, borderRadius: 10, backgroundColor: Colors.border },
+  noPhotosText:      { color: Colors.textMuted, fontSize: 14, padding: 16, paddingTop: 8 },
+  addPhotosBox:      { padding: 16, borderTopWidth: 1, borderTopColor: Colors.border },
+  addPhotosLabel:    { fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 4 },
+  addPhotosHint:     { fontSize: 12, color: Colors.textMuted, marginBottom: 14 },
+  uploadErrorBox:    { backgroundColor: '#FEE2E2', borderRadius: 8, padding: 10, marginTop: 10, borderWidth: 1, borderColor: '#FECACA' },
+  uploadErrorText:   { color: '#DC2626', fontSize: 13 },
+  uploadSuccessBox:  { backgroundColor: '#D1FAE5', borderRadius: 8, padding: 10, marginTop: 10, borderWidth: 1, borderColor: '#6EE7B7' },
+  uploadSuccessText: { color: '#065F46', fontSize: 13, fontWeight: '600' },
+  uploadBtn:         { backgroundColor: Colors.primary, borderRadius: 10, padding: 14, alignItems: 'center', marginTop: 12 },
+  uploadBtnDisabled: { opacity: 0.5 },
+  uploadBtnText:     { color: '#fff', fontWeight: 'bold', fontSize: 15 },
 
   // Messages
   messagesCard:    { backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
