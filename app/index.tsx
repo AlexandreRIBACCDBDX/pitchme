@@ -14,7 +14,6 @@ export default function Index() {
     );
   }
 
-  if (!user) return <Redirect href="/(auth)/login" />;
-  if (profile?.role === 'admin') return <Redirect href="/(admin)" />;
-  return <Redirect href="/(candidate)" />;
+  if (user && profile?.role === 'admin') return <Redirect href="/(admin)" />;
+  return <Redirect href="/(candidate)/choisir-candidature" />;
 }

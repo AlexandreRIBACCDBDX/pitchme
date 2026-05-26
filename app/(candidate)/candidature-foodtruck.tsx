@@ -1,11 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Switch, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/hooks/useAuth';
 import { Colors } from '@/constants/theme';
 import SiretInput from '@/components/SiretInput';
 import PhotoPicker from '@/components/PhotoPicker';
@@ -24,8 +23,6 @@ const SPECIAL_DIETS = ['Végétarien', 'Vegan', 'Sans gluten', 'Halal', 'Kasher'
 interface MenuItem { name: string; price: string; }
 
 export default function CandidatureFoodtruck() {
-  const { user } = useAuth();
-  const [existingId, setExistingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [step, setStep] = useState(1);
@@ -33,6 +30,10 @@ export default function CandidatureFoodtruck() {
   const [photos, setPhotos] = useState<any[]>([]);
 
   const [form, setForm] = useState({
+    contactFirstName: '',
+    contactLastName: '',
+    contactEmail: '',
+    contactPhone: '',
     businessName: '',
     siret: '',
     siretData: null as SiretData | null,
@@ -52,40 +53,6 @@ export default function CandidatureFoodtruck() {
     menuItems: [{ name: '', price: '' }] as MenuItem[],
     beverages: '',
   });
-
-  useEffect(() => { loadExisting(); }, []);
-
-  async function loadExisting() {
-    const { data } = await (supabase.from('candidatures') as any)
-      .select('*')
-      .eq('candidature_type', 'foodtruck')
-      .limit(1)
-      .maybeSingle();
-    if (data) {
-      setExistingId(data.id);
-      const ft = data.foodtruck_data ?? {};
-      setForm({
-        businessName: data.business_name || '',
-        siret: data.siret || '',
-        siretData: data.siret_data,
-        address: data.address || '',
-        city: data.city || '',
-        postalCode: data.postal_code || '',
-        websiteUrl: data.website_url || '',
-        instagramUrl: data.instagram_url || '',
-        vehicleType: ft.vehicle_type || '',
-        vehicleLength: ft.vehicle_length || '',
-        averagePrice: ft.average_price ? String(ft.average_price) : '',
-        specialDiets: ft.special_diets || [],
-        powerNeeded: ft.power_needed || 'none',
-        waterNeeded: ft.water_needed || false,
-        gasNeeded: ft.gas_needed || false,
-        previousParticipant: data.previous_participant || false,
-        menuItems: ft.menu_items?.length ? ft.menu_items : [{ name: '', price: '' }],
-        beverages: ft.beverages || '',
-      });
-    }
-  }
 
   function update(field: string, value: any) {
     setForm(f => ({ ...f, [field]: value }));
@@ -117,6 +84,8 @@ export default function CandidatureFoodtruck() {
   }
 
   function validateStep1() {
+    if (!form.contactFirstName.trim() || !form.contactLastName.trim()) return 'Prénom et nom du responsable requis';
+    if (!form.contactEmail.trim() || !form.contactEmail.includes('@')) return 'Email de contact valide requis';
     if (!form.businessName) return 'Nom du commerce requis';
     if (!form.siret || form.siret.replace(/\s/g, '').length !== 14) return 'SIRET invalide (14 chiffres requis)';
     if (siretChecking) return 'Vérification SIRET en cours…';
@@ -141,8 +110,6 @@ export default function CandidatureFoodtruck() {
     setSaving(true);
 
     try {
-      if (!user) throw new Error('Non connecté');
-
       const foodtruckData = {
         vehicle_type:   form.vehicleType,
         vehicle_length: form.vehicleLength,
@@ -156,7 +123,10 @@ export default function CandidatureFoodtruck() {
       };
 
       const payload = {
-        user_id:             user.id,
+        contact_first_name:  form.contactFirstName.trim(),
+        contact_last_name:   form.contactLastName.trim(),
+        contact_email:       form.contactEmail.trim(),
+        contact_phone:       form.contactPhone.trim() || null,
         candidature_type:    'foodtruck',
         business_name:       form.businessName,
         siret:               form.siret.replace(/\s/g, ''),
@@ -176,35 +146,23 @@ export default function CandidatureFoodtruck() {
         foodtruck_data:      foodtruckData,
       };
 
-      let candidatureId = existingId;
+      const { data, error } = await (supabase.from('candidatures') as any)
+        .insert(payload)
+        .select('id')
+        .maybeSingle();
+      if (error) throw error;
 
-      if (existingId) {
-        const { error } = await (supabase.from('candidatures') as any)
-          .update(payload)
-          .eq('id', existingId);
-        if (error) throw error;
-      } else {
-        const { data, error } = await (supabase.from('candidatures') as any)
-          .insert(payload)
-          .select('id')
-          .maybeSingle();
-        if (error) throw error;
-        candidatureId = data?.id ?? null;
-      }
-
-      if (photos.length > 0 && candidatureId) {
-        uploadPhotos(photos, candidatureId, user.id);
+      if (photos.length > 0 && data?.id) {
+        uploadPhotos(photos, data.id);
       }
       router.replace('/(candidate)');
     } catch (e: any) {
       console.error('[FoodTruck submit]', e);
       const code: string = e?.code ?? '';
       if (code === 'PGRST204' || e?.message?.includes('column')) {
-        setErrorMsg('Colonnes manquantes — exécutez les migrations SQL (candidature_type, foodtruck_data).');
+        setErrorMsg('Colonnes manquantes — exécutez les migrations SQL.');
       } else if (code === '42501' || e?.message?.includes('policy')) {
         setErrorMsg('Accès refusé — vérifiez les politiques RLS de la table candidatures.');
-      } else if (code === '23505') {
-        setErrorMsg('Une candidature Food Truck existe déjà pour ce compte.');
       } else {
         setErrorMsg(e?.message ?? 'Erreur lors de l\'envoi. Réessayez.');
       }
@@ -213,17 +171,23 @@ export default function CandidatureFoodtruck() {
     }
   }
 
-  async function uploadPhotos(photoList: any[], candidatureId: string, userId: string) {
+  async function uploadPhotos(photoList: any[], candidatureId: string) {
     for (const photo of photoList) {
       try {
         const ext = (photo.name ?? 'photo').split('.').pop() || 'jpg';
-        const path = `${userId}/${candidatureId}/${Date.now()}.${ext}`;
+        const path = `${candidatureId}/${Date.now()}.${ext}`;
         const res = await fetch(photo.uri);
         const blob = await res.blob();
         const { data: up } = await supabase.storage.from('product-photos').upload(path, blob, { contentType: `image/${ext}` });
         if (up) {
           const { data: { publicUrl } } = supabase.storage.from('product-photos').getPublicUrl(path);
-          await (supabase.from('documents') as any).insert({ candidature_id: candidatureId, uploaded_by: userId, file_name: photo.name, file_url: publicUrl, file_type: 'image', doc_category: 'product_photo' });
+          await (supabase.from('documents') as any).insert({
+            candidature_id: candidatureId,
+            file_name: photo.name,
+            file_url: publicUrl,
+            file_type: 'image',
+            doc_category: 'product_photo',
+          });
         }
       } catch {}
     }
@@ -247,9 +211,28 @@ export default function CandidatureFoodtruck() {
 
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
 
-        {/* ── ÉTAPE 1 : Infos professionnelles ── */}
+        {/* ── ÉTAPE 1 ── */}
         {step === 1 && (
           <View>
+            <Text style={styles.sectionTitle}>👤 Vos coordonnées</Text>
+
+            <View style={styles.row}>
+              <View style={styles.half}>
+                <Text style={styles.label}>Prénom *</Text>
+                <TextInput style={styles.input} value={form.contactFirstName} onChangeText={v => update('contactFirstName', v)} placeholder="Jean" placeholderTextColor={Colors.textMuted} />
+              </View>
+              <View style={styles.half}>
+                <Text style={styles.label}>Nom *</Text>
+                <TextInput style={styles.input} value={form.contactLastName} onChangeText={v => update('contactLastName', v)} placeholder="Dupont" placeholderTextColor={Colors.textMuted} />
+              </View>
+            </View>
+
+            <Text style={styles.label}>Email de contact *</Text>
+            <TextInput style={styles.input} value={form.contactEmail} onChangeText={v => update('contactEmail', v)} placeholder="jean.dupont@email.com" placeholderTextColor={Colors.textMuted} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} />
+
+            <Text style={styles.label}>Téléphone</Text>
+            <TextInput style={styles.input} value={form.contactPhone} onChangeText={v => update('contactPhone', v)} placeholder="06 12 34 56 78" placeholderTextColor={Colors.textMuted} keyboardType="phone-pad" />
+
             <Text style={styles.sectionTitle}>🏢 Informations professionnelles</Text>
 
             <Text style={styles.label}>Nom du commerce *</Text>
@@ -301,10 +284,9 @@ export default function CandidatureFoodtruck() {
           </View>
         )}
 
-        {/* ── ÉTAPE 2 : Véhicule, Menu & Logistique ── */}
+        {/* ── ÉTAPE 2 ── */}
         {step === 2 && (
           <View>
-            {/* Véhicule */}
             <Text style={styles.sectionTitle}>🚚 Votre véhicule</Text>
 
             <Text style={styles.label}>Type de véhicule *</Text>
@@ -325,28 +307,14 @@ export default function CandidatureFoodtruck() {
               ))}
             </View>
 
-            {/* Menu */}
             <Text style={styles.sectionTitle}>🍽️ Votre carte</Text>
 
             <Text style={styles.label}>Plats proposés * (nom + prix indicatif)</Text>
             {form.menuItems.map((item, idx) => (
               <View key={idx} style={styles.menuRow}>
-                <TextInput
-                  style={[styles.input, styles.menuNameInput]}
-                  value={item.name}
-                  onChangeText={v => updateMenuItem(idx, 'name', v)}
-                  placeholder="Ex: Burger fromage"
-                  placeholderTextColor={Colors.textMuted}
-                />
+                <TextInput style={[styles.input, styles.menuNameInput]} value={item.name} onChangeText={v => updateMenuItem(idx, 'name', v)} placeholder="Ex: Burger fromage" placeholderTextColor={Colors.textMuted} />
                 <View style={styles.priceRow}>
-                  <TextInput
-                    style={[styles.input, styles.priceInput]}
-                    value={item.price}
-                    onChangeText={v => updateMenuItem(idx, 'price', v)}
-                    placeholder="10"
-                    placeholderTextColor={Colors.textMuted}
-                    keyboardType="decimal-pad"
-                  />
+                  <TextInput style={[styles.input, styles.priceInput]} value={item.price} onChangeText={v => updateMenuItem(idx, 'price', v)} placeholder="10" placeholderTextColor={Colors.textMuted} keyboardType="decimal-pad" />
                   <Text style={styles.euroSign}>€</Text>
                 </View>
                 {form.menuItems.length > 1 && (
@@ -361,25 +329,10 @@ export default function CandidatureFoodtruck() {
             </TouchableOpacity>
 
             <Text style={styles.label}>Boissons proposées</Text>
-            <TextInput
-              style={[styles.input, styles.textarea]}
-              value={form.beverages}
-              onChangeText={v => update('beverages', v)}
-              placeholder="Ex: Sodas, bières artisanales, jus de fruits..."
-              placeholderTextColor={Colors.textMuted}
-              multiline
-              numberOfLines={3}
-            />
+            <TextInput style={[styles.input, styles.textarea]} value={form.beverages} onChangeText={v => update('beverages', v)} placeholder="Ex: Sodas, bières artisanales, jus de fruits..." placeholderTextColor={Colors.textMuted} multiline numberOfLines={3} />
 
             <Text style={styles.label}>Prix moyen par personne (€)</Text>
-            <TextInput
-              style={styles.input}
-              value={form.averagePrice}
-              onChangeText={v => update('averagePrice', v)}
-              placeholder="15"
-              placeholderTextColor={Colors.textMuted}
-              keyboardType="decimal-pad"
-            />
+            <TextInput style={styles.input} value={form.averagePrice} onChangeText={v => update('averagePrice', v)} placeholder="15" placeholderTextColor={Colors.textMuted} keyboardType="decimal-pad" />
 
             <Text style={styles.label}>Régimes spéciaux proposés</Text>
             <View style={styles.chipGrid}>
@@ -390,7 +343,6 @@ export default function CandidatureFoodtruck() {
               ))}
             </View>
 
-            {/* Logistique */}
             <Text style={styles.sectionTitle}>⚡ Logistique</Text>
 
             <Text style={styles.label}>Alimentation électrique nécessaire</Text>
@@ -406,18 +358,15 @@ export default function CandidatureFoodtruck() {
               <Text style={styles.switchLabel}>Besoin d'eau (raccordement)</Text>
               <Switch value={form.waterNeeded} onValueChange={v => update('waterNeeded', v)} trackColor={{ false: Colors.border, true: Colors.primary }} />
             </View>
-
             <View style={styles.switchRow}>
               <Text style={styles.switchLabel}>Utilisation de gaz</Text>
               <Switch value={form.gasNeeded} onValueChange={v => update('gasNeeded', v)} trackColor={{ false: Colors.border, true: Colors.primary }} />
             </View>
-
             <View style={styles.switchRow}>
               <Text style={styles.switchLabel}>Déjà participant au marché</Text>
               <Switch value={form.previousParticipant} onValueChange={v => update('previousParticipant', v)} trackColor={{ false: Colors.border, true: Colors.primary }} />
             </View>
 
-            {/* Photos */}
             <Text style={styles.sectionTitle}>📷 Photos du camion & des plats</Text>
             <Text style={styles.hint}>Ajoutez jusqu'à 6 photos</Text>
             <PhotoPicker onPhotosChange={setPhotos} maxPhotos={6} />
@@ -434,7 +383,7 @@ export default function CandidatureFoodtruck() {
               disabled={saving}
             >
               <Text style={styles.submitBtnText}>
-                {saving ? 'Envoi en cours...' : existingId ? '💾 Mettre à jour' : '📤 Envoyer ma candidature'}
+                {saving ? 'Envoi en cours...' : '📤 Envoyer ma candidature'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -460,6 +409,7 @@ const styles = StyleSheet.create({
   input:          { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, borderRadius: 10, padding: 14, color: Colors.text, fontSize: 15, marginBottom: 16 },
   textarea:       { height: 90, textAlignVertical: 'top' },
   row:            { flexDirection: 'row', gap: 10 },
+  half:           { flex: 1 },
   quarter:        { flex: 2 },
   threeQuarters:  { flex: 3 },
   instagramRow:   { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },

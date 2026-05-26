@@ -1,25 +1,26 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Alert, KeyboardAvoidingView, Platform, Switch,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/hooks/useAuth';
 import { Colors, ProductCategories } from '@/constants/theme';
 import SiretInput from '@/components/SiretInput';
 import PhotoPicker from '@/components/PhotoPicker';
 import type { SiretData } from '@/lib/siret';
 
 export default function CandidatureForm() {
-  const { user } = useAuth();
-  const [existingId, setExistingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [step, setStep] = useState(1);
   const [siretChecking, setSiretChecking] = useState(false);
 
   const [form, setForm] = useState({
+    contactFirstName: '',
+    contactLastName: '',
+    contactEmail: '',
+    contactPhone: '',
     businessName: '',
     siret: '',
     siretData: null as SiretData | null,
@@ -35,40 +36,13 @@ export default function CandidatureForm() {
   });
   const [photos, setPhotos] = useState<any[]>([]);
 
-  useEffect(() => {
-    loadExisting();
-  }, []);
-
-  async function loadExisting() {
-    const { data } = await (supabase.from('candidatures') as any)
-      .select('*')
-      .or('candidature_type.eq.market,candidature_type.is.null')
-      .limit(1)
-      .maybeSingle();
-    if (data) {
-      setExistingId(data.id);
-      setForm({
-        businessName: data.business_name || '',
-        siret: data.siret || '',
-        siretData: data.siret_data as any,
-        address: data.address || '',
-        city: data.city || '',
-        postalCode: data.postal_code || '',
-        productCategory: data.product_category || '',
-        productDescription: data.product_description || '',
-        websiteUrl: data.website_url || '',
-        instagramUrl: (data as any).instagram_url || '',
-        electricityNeeded: data.electricity_needed || false,
-        previousParticipant: data.previous_participant || false,
-      });
-    }
-  }
-
   function update(field: string, value: any) {
     setForm(f => ({ ...f, [field]: value }));
   }
 
   function validateStep1() {
+    if (!form.contactFirstName.trim() || !form.contactLastName.trim()) return 'Prénom et nom du responsable requis';
+    if (!form.contactEmail.trim() || !form.contactEmail.includes('@')) return 'Email de contact valide requis';
     if (!form.businessName) return 'Nom du commerce / activité requis';
     if (!form.siret || form.siret.replace(/\s/g, '').length !== 14) return 'SIRET invalide (14 chiffres requis)';
     if (siretChecking) return 'Vérification SIRET en cours…';
@@ -83,11 +57,11 @@ export default function CandidatureForm() {
     return null;
   }
 
-  async function uploadPhotos(photoList: any[], candidatureId: string, userId: string) {
+  async function uploadPhotos(photoList: any[], candidatureId: string) {
     for (const photo of photoList) {
       try {
         const ext = (photo.name ?? 'photo').split('.').pop() || 'jpg';
-        const path = `${userId}/${candidatureId}/${Date.now()}.${ext}`;
+        const path = `${candidatureId}/${Date.now()}.${ext}`;
         const response = await fetch(photo.uri);
         const blob = await response.blob();
         const { data: uploadData } = await supabase.storage
@@ -97,7 +71,6 @@ export default function CandidatureForm() {
           const { data: { publicUrl } } = supabase.storage.from('product-photos').getPublicUrl(path);
           await (supabase.from('documents') as any).insert({
             candidature_id: candidatureId,
-            uploaded_by: userId,
             file_name: photo.name,
             file_url: publicUrl,
             file_type: 'image',
@@ -119,37 +92,31 @@ export default function CandidatureForm() {
       Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('Délai dépassé — vérifiez votre connexion réseau')), 12000))]);
 
     try {
-      if (!user) throw new Error('Non connecté');
-
       const payload = {
-        user_id: user.id,
-        business_name: form.businessName,
-        siret: form.siret.replace(/\s/g, ''),
-        siret_data: form.siretData as any,
-        address: form.address,
-        city: form.city,
-        postal_code: form.postalCode,
-        product_category: form.productCategory,
+        contact_first_name: form.contactFirstName.trim(),
+        contact_last_name:  form.contactLastName.trim(),
+        contact_email:      form.contactEmail.trim(),
+        contact_phone:      form.contactPhone.trim() || null,
+        business_name:      form.businessName,
+        siret:              form.siret.replace(/\s/g, ''),
+        siret_data:         form.siretData as any,
+        address:            form.address,
+        city:               form.city,
+        postal_code:        form.postalCode,
+        product_category:   form.productCategory,
         product_description: form.productDescription,
-        website_url: form.websiteUrl || null,
-        instagram_url: form.instagramUrl || null,
+        website_url:        form.websiteUrl || null,
+        instagram_url:      form.instagramUrl || null,
         electricity_needed: form.electricityNeeded,
         previous_participant: form.previousParticipant,
+        candidature_type:   'market',
       };
 
-      let candidatureId = existingId;
+      const { data, error } = await deadline((supabase.from('candidatures') as any).insert(payload).select('id').maybeSingle()) as any;
+      if (error) { console.error('[Submit] insert error:', error); setErrorMsg(error.message); return; }
 
-      if (existingId) {
-        const { error } = await deadline((supabase.from('candidatures') as any).update(payload).eq('id', existingId)) as any;
-        if (error) { console.error('[Submit] update error:', error); setErrorMsg(error.message); return; }
-      } else {
-        const { data, error } = await deadline((supabase.from('candidatures') as any).insert(payload).select().maybeSingle()) as any;
-        if (error) { console.error('[Submit] insert error:', error); setErrorMsg(error.message); return; }
-        candidatureId = data?.id;
-      }
-
-      if (photos.length > 0 && candidatureId) {
-        uploadPhotos(photos, candidatureId, user.id);
+      if (photos.length > 0 && data?.id) {
+        uploadPhotos(photos, data.id);
       }
       router.replace('/(candidate)');
     } catch (e: any) {
@@ -176,6 +143,25 @@ export default function CandidatureForm() {
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         {step === 1 && (
           <View>
+            <Text style={styles.sectionTitle}>👤 Vos coordonnées</Text>
+
+            <View style={styles.row}>
+              <View style={styles.half}>
+                <Text style={styles.label}>Prénom *</Text>
+                <TextInput style={styles.input} value={form.contactFirstName} onChangeText={v => update('contactFirstName', v)} placeholder="Jean" placeholderTextColor={Colors.textMuted} />
+              </View>
+              <View style={styles.half}>
+                <Text style={styles.label}>Nom *</Text>
+                <TextInput style={styles.input} value={form.contactLastName} onChangeText={v => update('contactLastName', v)} placeholder="Dupont" placeholderTextColor={Colors.textMuted} />
+              </View>
+            </View>
+
+            <Text style={styles.label}>Email de contact *</Text>
+            <TextInput style={styles.input} value={form.contactEmail} onChangeText={v => update('contactEmail', v)} placeholder="jean.dupont@email.com" placeholderTextColor={Colors.textMuted} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} />
+
+            <Text style={styles.label}>Téléphone</Text>
+            <TextInput style={styles.input} value={form.contactPhone} onChangeText={v => update('contactPhone', v)} placeholder="06 12 34 56 78" placeholderTextColor={Colors.textMuted} keyboardType="phone-pad" />
+
             <Text style={styles.sectionTitle}>🏪 Informations professionnelles</Text>
 
             <Text style={styles.label}>Nom du commerce / activité *</Text>
@@ -290,7 +276,7 @@ export default function CandidatureForm() {
               disabled={saving}
             >
               <Text style={styles.submitBtnText}>
-                {saving ? 'Envoi en cours...' : existingId ? '💾 Mettre à jour' : '📤 Envoyer ma candidature'}
+                {saving ? 'Envoi en cours...' : '📤 Envoyer ma candidature'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -314,6 +300,7 @@ const styles = StyleSheet.create({
   textarea: { height: 120, textAlignVertical: 'top' },
   charCount: { color: Colors.textMuted, fontSize: 12, textAlign: 'right', marginTop: -12, marginBottom: 16 },
   row: { flexDirection: 'row', gap: 10 },
+  half: { flex: 1 },
   quarter: { flex: 2 },
   threeQuarters: { flex: 3 },
   categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
@@ -321,11 +308,6 @@ const styles = StyleSheet.create({
   categoryBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   categoryBtnText: { color: Colors.textSecondary, fontSize: 13 },
   categoryBtnTextActive: { color: '#fff', fontWeight: 'bold' },
-  standRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  standBtn: { flex: 1, backgroundColor: Colors.card, borderRadius: 10, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: Colors.border },
-  standBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  standBtnText: { color: Colors.textSecondary, fontSize: 15, fontWeight: 'bold' },
-  standBtnTextActive: { color: '#fff' },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: Colors.card, borderRadius: 10, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: Colors.border },
   switchLabel: { color: Colors.text, fontSize: 15 },
   hint: { color: Colors.textMuted, fontSize: 13, marginBottom: 12 },

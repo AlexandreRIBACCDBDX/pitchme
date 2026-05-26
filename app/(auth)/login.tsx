@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, KeyboardAvoidingView, Platform, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
 
-export default function Login() {
+export default function AdminLogin() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,9 +30,7 @@ export default function Login() {
 
       if (authError) {
         const msg = authError.message.toLowerCase();
-        if (msg.includes('not confirmed') || msg.includes('email_not_confirmed')) {
-          setError('Email non confirmé — vérifiez votre boîte mail.');
-        } else if (msg.includes('invalid') || msg.includes('credentials')) {
+        if (msg.includes('invalid') || msg.includes('credentials')) {
           setError('Email ou mot de passe incorrect.');
         } else {
           setError(authError.message);
@@ -40,25 +38,18 @@ export default function Login() {
         return;
       }
 
-      // Fetch profile to determine role — 5 s timeout so the spinner never hangs
-      let role = 'candidate';
-      try {
-        await Promise.race([
-          (async () => {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('role')
-              .eq('id', data.user.id)
-              .maybeSingle();
-            if (profile?.role) role = profile.role;
-          })(),
-          new Promise<void>(resolve => setTimeout(resolve, 5000)),
-        ]);
-      } catch {
-        // network error — default role already 'candidate'
+      const { data: profile } = await (supabase.from('profiles') as any)
+        .select('role')
+        .eq('id', data.user.id)
+        .maybeSingle();
+
+      if (profile?.role !== 'admin') {
+        await supabase.auth.signOut();
+        setError('Accès réservé aux administrateurs.');
+        return;
       }
 
-      router.replace(role === 'admin' ? '/(admin)' : '/(candidate)');
+      router.replace('/(admin)');
     } catch (e: any) {
       setError(e?.message ?? 'Erreur réseau. Vérifiez votre connexion.');
     } finally {
@@ -68,19 +59,18 @@ export default function Login() {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+      <View style={styles.inner}>
         <View style={styles.header}>
-          <AppLogo size={80} />
+          <AppLogo size={64} />
           <View style={styles.wordmark}>
             <Text style={styles.wordmarkBold}>Pitch</Text>
             <Text style={styles.wordmarkLight}>Me</Text>
           </View>
-          <Text style={styles.subtitle}>Marché de Noël · Bourg-sur-Gironde</Text>
-          <Text style={styles.tagline}>Espace Candidat</Text>
+          <Text style={styles.badge}>Espace Admin</Text>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Connexion</Text>
+          <Text style={styles.cardTitle}>Connexion administrateur</Text>
 
           {error ? (
             <View style={styles.errorBox}>
@@ -93,7 +83,7 @@ export default function Login() {
             style={styles.input}
             value={email}
             onChangeText={v => { setEmail(v); setError(''); }}
-            placeholder="votre@email.com"
+            placeholder="admin@email.com"
             placeholderTextColor={Colors.textMuted}
             keyboardType="email-address"
             autoCapitalize="none"
@@ -122,54 +112,33 @@ export default function Login() {
               : <Text style={styles.buttonText}>Se connecter</Text>
             }
           </TouchableOpacity>
-
-          <TouchableOpacity onPress={() => router.push('/(auth)/register')} disabled={loading}>
-            <Text style={styles.link}>
-              Pas encore de compte ? <Text style={styles.linkBold}>S'inscrire</Text>
-            </Text>
-          </TouchableOpacity>
         </View>
-      </ScrollView>
+
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.replace('/(candidate)/choisir-candidature')}>
+          <Text style={styles.backText}>← Retour au formulaire candidat</Text>
+        </TouchableOpacity>
+      </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
-  scroll: { flexGrow: 1, padding: 20 },
-  header: { alignItems: 'center', paddingVertical: 40 },
+  container:     { flex: 1, backgroundColor: Colors.background },
+  inner:         { flex: 1, padding: 24, justifyContent: 'center' },
+  header:        { alignItems: 'center', marginBottom: 32 },
   wordmark:      { flexDirection: 'row', alignItems: 'baseline', marginTop: 14 },
-  wordmarkBold:  { fontSize: 30, fontWeight: '800', color: '#1A202C' },
-  wordmarkLight: { fontSize: 30, fontWeight: '300', color: Colors.primary },
-  subtitle: { fontSize: 15, color: Colors.textSecondary, marginTop: 4 },
-  tagline: { fontSize: 12, color: Colors.textMuted, marginTop: 8, letterSpacing: 2, textTransform: 'uppercase' },
-  card: { backgroundColor: Colors.card, borderRadius: 16, padding: 24, borderWidth: 1, borderColor: Colors.border },
-  cardTitle: { fontSize: 20, fontWeight: 'bold', color: Colors.text, marginBottom: 20 },
-  errorBox: { backgroundColor: '#FEE2E2', borderRadius: 10, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#FECACA' },
-  errorText: { color: '#DC2626', fontSize: 14 },
-  label: { fontSize: 14, color: Colors.textSecondary, marginBottom: 6 },
-  input: {
-    backgroundColor: Colors.surface,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 10,
-    padding: 14,
-    color: Colors.text,
-    fontSize: 16,
-    marginBottom: 16,
-  },
-  button: {
-    backgroundColor: Colors.primary,
-    borderRadius: 10,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 20,
-    minHeight: 52,
-    justifyContent: 'center',
-  },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  link: { textAlign: 'center', color: Colors.textSecondary },
-  linkBold: { color: Colors.primary, fontWeight: 'bold' },
+  wordmarkBold:  { fontSize: 28, fontWeight: '800', color: '#1A202C' },
+  wordmarkLight: { fontSize: 28, fontWeight: '300', color: Colors.primary },
+  badge:         { marginTop: 8, backgroundColor: Colors.primary + '18', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 4, color: Colors.primary, fontWeight: '700', fontSize: 12, letterSpacing: 1, overflow: 'hidden' },
+  card:          { backgroundColor: Colors.card, borderRadius: 16, padding: 24, borderWidth: 1, borderColor: Colors.border },
+  cardTitle:     { fontSize: 18, fontWeight: 'bold', color: Colors.text, marginBottom: 20 },
+  errorBox:      { backgroundColor: '#FEE2E2', borderRadius: 10, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#FECACA' },
+  errorText:     { color: '#DC2626', fontSize: 14 },
+  label:         { fontSize: 14, color: Colors.textSecondary, marginBottom: 6 },
+  input:         { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderRadius: 10, padding: 14, color: Colors.text, fontSize: 16, marginBottom: 16 },
+  button:        { backgroundColor: Colors.primary, borderRadius: 10, padding: 16, alignItems: 'center', marginTop: 8, minHeight: 52, justifyContent: 'center' },
+  buttonDisabled:{ opacity: 0.6 },
+  buttonText:    { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  backBtn:       { marginTop: 24, alignItems: 'center' },
+  backText:      { color: Colors.textSecondary, fontSize: 14 },
 });
