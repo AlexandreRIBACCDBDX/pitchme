@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, TextInput, Image, Modal,
+  ActivityIndicator, TextInput, Modal,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Colors, StatusColors, StatusLabels } from '@/constants/theme';
 import MessageThread from '@/components/MessageThread';
+import PhotoGallery from '@/components/PhotoGallery';
 
 type Tab = 'info' | 'messages';
 
@@ -225,23 +226,14 @@ export default function AdminCandidatureDetail() {
               </Row2>
 
               {/* ── Photos ── */}
-              {photos.length > 0 ? (
-                <View style={styles.card}>
-                  <Text style={styles.cardTitle}>Photos ({photos.length})</Text>
-                  <View style={styles.photoGrid}>
-                    {photos.map((url, i) => (
-                      <View key={i} style={styles.photoWrap}>
-                        <Image source={{ uri: url }} style={styles.photo} resizeMode="cover" />
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              ) : (
-                <View style={[styles.card, { alignItems: 'center', paddingVertical: 28 }]}>
-                  <Text style={{ fontSize: 28, marginBottom: 8 }}>📷</Text>
-                  <Text style={styles.cardTitle}>Aucune photo déposée</Text>
-                </View>
-              )}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Photos ({photos.length})</Text>
+                <PhotoGallery
+                  urls={photos}
+                  thumbSize={110}
+                  emptyText="Aucune photo déposée"
+                />
+              </View>
 
               {data.status === 'rejected' && data.rejection_reason && (
                 <View style={styles.rejectionBanner}>
@@ -449,10 +441,6 @@ const styles = StyleSheet.create({
   rejectionBannerTitle: { color: '#DC2626', fontWeight: '700', marginBottom: 4, fontSize: 13 },
   rejectionBannerText:  { color: '#7F1D1D', fontSize: 13, lineHeight: 18 },
 
-  // Photos
-  photoGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 },
-  photoWrap:  { width: '31%' },
-  photo:      { width: '100%', aspectRatio: 1, borderRadius: 10, backgroundColor: Colors.border },
 
   // Sidebar right
   avatarHero:   { alignItems: 'center', padding: 24, borderBottomWidth: 1, borderBottomColor: Colors.border },

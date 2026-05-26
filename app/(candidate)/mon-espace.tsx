@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, Image,
+  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
 import PhotoPicker from '@/components/PhotoPicker';
+import PhotoGallery from '@/components/PhotoGallery';
 
 const STATUS_CONFIG: Record<string, { icon: string; bg: string; tint: string; label: string; hint: string }> = {
   pending:   { icon: '⏳', bg: '#FEF3C7', tint: '#D97706', label: 'En attente',        hint: "Votre dossier est bien reçu et attend d'être lu par l'équipe organisatrice." },
@@ -273,15 +274,13 @@ export default function MonEspace() {
             <View style={styles.photosCard}>
               <Text style={styles.photosCardTitle}>📷 Photos de votre dossier</Text>
 
-              {(candidature.photo_urls ?? []).length > 0 ? (
-                <View style={styles.photoGrid}>
-                  {(candidature.photo_urls as string[]).map((url, i) => (
-                    <Image key={i} source={{ uri: url }} style={styles.photoThumb} resizeMode="cover" />
-                  ))}
-                </View>
-              ) : (
-                <Text style={styles.noPhotosText}>Aucune photo pour l'instant.</Text>
-              )}
+              <View style={styles.photoGalleryWrap}>
+                <PhotoGallery
+                  urls={candidature.photo_urls ?? []}
+                  thumbSize={88}
+                  emptyText="Aucune photo pour l'instant."
+                />
+              </View>
 
               <View style={styles.addPhotosBox}>
                 <Text style={styles.addPhotosLabel}>Ajouter des photos</Text>
@@ -432,9 +431,7 @@ const styles = StyleSheet.create({
   // Photos
   photosCard:        { backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', marginBottom: 16 },
   photosCardTitle:   { fontSize: 16, fontWeight: 'bold', color: Colors.text, padding: 18, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  photoGrid:         { flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 16 },
-  photoThumb:        { width: '31%', aspectRatio: 1, borderRadius: 10, backgroundColor: Colors.border },
-  noPhotosText:      { color: Colors.textMuted, fontSize: 14, padding: 16, paddingTop: 8 },
+  photoGalleryWrap:  { padding: 16, paddingTop: 8 },
   addPhotosBox:      { padding: 16, borderTopWidth: 1, borderTopColor: Colors.border },
   addPhotosLabel:    { fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 4 },
   addPhotosHint:     { fontSize: 12, color: Colors.textMuted, marginBottom: 14 },
