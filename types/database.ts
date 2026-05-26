@@ -68,7 +68,8 @@ export interface Database {
         Row: {
           id: string;
           candidature_id: string;
-          sender_id: string;
+          sender_id: string | null;
+          sender_role: 'admin' | 'candidate';
           content: string;
           is_read: boolean;
           created_at: string;
@@ -84,6 +85,7 @@ export type Profile = Database['public']['Tables']['profiles']['Row'];
 export type Candidature = Database['public']['Tables']['candidatures']['Row'];
 export type Document = Database['public']['Tables']['documents']['Row'];
 export type Message = Database['public']['Tables']['messages']['Row'];
+export type MessageSenderRole = 'admin' | 'candidate';
 
 export type CandidatureStatus = 'pending' | 'reviewing' | 'accepted' | 'rejected';
 

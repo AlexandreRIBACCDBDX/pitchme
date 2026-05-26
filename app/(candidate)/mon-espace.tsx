@@ -9,10 +9,10 @@ import { Colors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
 
 const STATUS_CONFIG: Record<string, { icon: string; bg: string; tint: string; label: string; hint: string }> = {
-  pending:   { icon: '⏳', bg: '#FEF3C7', tint: '#D97706', label: 'En attente',     hint: "Votre dossier est bien reçu et attend d'être lu par l'équipe organisatrice." },
-  reviewing: { icon: '🔍', bg: '#DBEAFE', tint: '#2563EB', label: 'En cours d\'étude', hint: "Votre dossier est en cours d'examen. Nous reviendrons vers vous prochainement." },
-  accepted:  { icon: '🎉', bg: '#D1FAE5', tint: '#059669', label: 'Retenu !',       hint: "Félicitations ! Votre candidature a été retenue pour le Marché de Noël." },
-  rejected:  { icon: '❌', bg: '#FEE2E2', tint: '#DC2626', label: 'Non retenu',     hint: "Votre candidature n'a pas été retenue cette année." },
+  pending:   { icon: '⏳', bg: '#FEF3C7', tint: '#D97706', label: 'En attente',        hint: "Votre dossier est bien reçu et attend d'être lu par l'équipe organisatrice." },
+  reviewing: { icon: '🔍', bg: '#DBEAFE', tint: '#2563EB', label: "En cours d'étude", hint: "Votre dossier est en cours d'examen. Nous reviendrons vers vous prochainement." },
+  accepted:  { icon: '🎉', bg: '#D1FAE5', tint: '#059669', label: 'Retenu !',          hint: "Félicitations ! Votre candidature a été retenue pour le Marché de Noël." },
+  rejected:  { icon: '❌', bg: '#FEE2E2', tint: '#DC2626', label: 'Non retenu',        hint: "Votre candidature n'a pas été retenue cette année." },
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -20,16 +20,33 @@ const TYPE_LABEL: Record<string, string> = {
   foodtruck: '🚚 Food Truck',
 };
 
+interface MsgRow {
+  id: string;
+  content: string;
+  sender_role: 'admin' | 'candidate';
+  is_read: boolean;
+  created_at: string;
+}
+
 export default function MonEspace() {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [candidature, setCandidature] = useState<any>(null);
+  const [messages, setMessages] = useState<MsgRow[]>([]);
+  const [reply, setReply] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
+  const [replyError, setReplyError] = useState('');
 
   function formatCode(raw: string) {
     const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (clean.length <= 4) return clean;
     return clean.slice(0, 4) + '-' + clean.slice(4, 8);
+  }
+
+  async function loadMessages(cleanedCode: string) {
+    const { data } = await supabase.rpc('get_messages_by_access_code', { p_code: cleanedCode });
+    if (data) setMessages(Array.isArray(data) ? data : [data]);
   }
 
   async function handleSearch() {
@@ -39,15 +56,21 @@ export default function MonEspace() {
     setError('');
     setLoading(true);
     setCandidature(null);
+    setMessages([]);
 
     try {
-      const { data, error: rpcError } = await supabase.rpc('get_candidature_by_access_code', { p_code: cleaned });
+      const [{ data, error: rpcError }, { data: msgs }] = await Promise.all([
+        supabase.rpc('get_candidature_by_access_code', { p_code: cleaned }),
+        supabase.rpc('get_messages_by_access_code', { p_code: cleaned }),
+      ]);
+
       if (rpcError) throw rpcError;
       if (!data || (Array.isArray(data) && data.length === 0)) {
         setError('Aucune candidature trouvée pour ce code. Vérifiez le code reçu après votre inscription.');
         return;
       }
       setCandidature(Array.isArray(data) ? data[0] : data);
+      if (msgs) setMessages(Array.isArray(msgs) ? msgs : [msgs]);
     } catch (e: any) {
       setError(e?.message ?? 'Erreur réseau. Vérifiez votre connexion.');
     } finally {
@@ -55,7 +78,28 @@ export default function MonEspace() {
     }
   }
 
+  async function handleReply() {
+    if (!reply.trim()) return;
+    const cleaned = code.replace(/\s/g, '');
+    setReplyError('');
+    setSendingReply(true);
+    try {
+      const { error: rpcError } = await supabase.rpc('send_candidate_message', {
+        p_code: cleaned,
+        p_content: reply.trim(),
+      });
+      if (rpcError) throw rpcError;
+      setReply('');
+      await loadMessages(cleaned);
+    } catch (e: any) {
+      setReplyError(e?.message ?? 'Erreur lors de l\'envoi. Réessayez.');
+    } finally {
+      setSendingReply(false);
+    }
+  }
+
   const cfg = candidature ? (STATUS_CONFIG[candidature.status] ?? STATUS_CONFIG.pending) : null;
+  const unreadCount = messages.filter(m => m.sender_role === 'admin' && !m.is_read).length;
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -80,7 +124,7 @@ export default function MonEspace() {
           <TextInput
             style={styles.codeInput}
             value={code}
-            onChangeText={v => { setCode(formatCode(v)); setError(''); setCandidature(null); }}
+            onChangeText={v => { setCode(formatCode(v)); setError(''); setCandidature(null); setMessages([]); }}
             placeholder="ABCD-EF23"
             placeholderTextColor={Colors.textMuted}
             autoCapitalize="characters"
@@ -106,67 +150,139 @@ export default function MonEspace() {
         ) : null}
 
         {candidature && cfg && (
-          <View style={styles.result}>
-            {/* En-tête statut */}
-            <View style={[styles.statusBanner, { backgroundColor: cfg.bg }]}>
-              <Text style={styles.statusIcon}>{cfg.icon}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.statusLabel, { color: cfg.tint }]}>{cfg.label}</Text>
-                <Text style={styles.statusHint}>{cfg.hint}</Text>
+          <>
+            {/* ── Statut & infos ── */}
+            <View style={styles.result}>
+              <View style={[styles.statusBanner, { backgroundColor: cfg.bg }]}>
+                <Text style={styles.statusIcon}>{cfg.icon}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.statusLabel, { color: cfg.tint }]}>{cfg.label}</Text>
+                  <Text style={styles.statusHint}>{cfg.hint}</Text>
+                </View>
               </View>
-            </View>
 
-            {/* Infos candidature */}
-            <View style={styles.infoBlock}>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoKey}>Commerce</Text>
-                <Text style={styles.infoValue}>{candidature.business_name}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoKey}>Type</Text>
-                <Text style={styles.infoValue}>{TYPE_LABEL[candidature.candidature_type ?? 'market'] ?? '—'}</Text>
-              </View>
-              {candidature.product_category ? (
+              <View style={styles.infoBlock}>
                 <View style={styles.infoRow}>
-                  <Text style={styles.infoKey}>Catégorie</Text>
-                  <Text style={styles.infoValue}>{candidature.product_category}</Text>
+                  <Text style={styles.infoKey}>Commerce</Text>
+                  <Text style={styles.infoValue}>{candidature.business_name}</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoKey}>Type</Text>
+                  <Text style={styles.infoValue}>{TYPE_LABEL[candidature.candidature_type ?? 'market'] ?? '—'}</Text>
+                </View>
+                {candidature.product_category ? (
+                  <View style={styles.infoRow}>
+                    <Text style={styles.infoKey}>Catégorie</Text>
+                    <Text style={styles.infoValue}>{candidature.product_category}</Text>
+                  </View>
+                ) : null}
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoKey}>Déposée le</Text>
+                  <Text style={styles.infoValue}>
+                    {new Date(candidature.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  </Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoKey}>Contact</Text>
+                  <Text style={styles.infoValue}>{candidature.contact_first_name} {candidature.contact_last_name}</Text>
+                </View>
+              </View>
+
+              {candidature.status === 'rejected' && candidature.rejection_reason ? (
+                <View style={styles.rejectionBox}>
+                  <Text style={styles.rejectionTitle}>Motif de refus</Text>
+                  <Text style={styles.rejectionText}>{candidature.rejection_reason}</Text>
                 </View>
               ) : null}
-              <View style={styles.infoRow}>
-                <Text style={styles.infoKey}>Déposée le</Text>
-                <Text style={styles.infoValue}>
-                  {new Date(candidature.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
-                </Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoKey}>Contact</Text>
-                <Text style={styles.infoValue}>{candidature.contact_first_name} {candidature.contact_last_name}</Text>
+
+              {candidature.status === 'accepted' && (
+                <View style={styles.acceptedBox}>
+                  <Text style={styles.acceptedText}>
+                    L'équipe organisatrice vous contactera à l'adresse {candidature.contact_email} pour les prochaines étapes.
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.codeReminder}>
+                <Text style={styles.codeReminderText}>Votre code d'accès : </Text>
+                <Text style={styles.codeReminderCode}>{candidature.access_code}</Text>
               </View>
             </View>
 
-            {/* Motif de refus */}
-            {candidature.status === 'rejected' && candidature.rejection_reason ? (
-              <View style={styles.rejectionBox}>
-                <Text style={styles.rejectionTitle}>Motif de refus</Text>
-                <Text style={styles.rejectionText}>{candidature.rejection_reason}</Text>
+            {/* ── Messages ── */}
+            <View style={styles.messagesCard}>
+              <View style={styles.messagesHeader}>
+                <Text style={styles.messagesTitle}>💬 Messages de l'organisateur</Text>
+                {unreadCount > 0 && (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadBadgeText}>{unreadCount} nouveau{unreadCount > 1 ? 'x' : ''}</Text>
+                  </View>
+                )}
               </View>
-            ) : null}
 
-            {/* Message accepté */}
-            {candidature.status === 'accepted' && (
-              <View style={styles.acceptedBox}>
-                <Text style={styles.acceptedText}>
-                  L'équipe organisatrice vous contactera à l'adresse {candidature.contact_email} pour les prochaines étapes.
+              {messages.length === 0 ? (
+                <Text style={styles.noMessages}>
+                  Aucun message pour l'instant. L'équipe vous contactera ici si nécessaire.
                 </Text>
-              </View>
-            )}
+              ) : (
+                <View style={styles.messagesList}>
+                  {messages.map(msg => (
+                    <View
+                      key={msg.id}
+                      style={[
+                        styles.msgBubble,
+                        msg.sender_role === 'admin' ? styles.msgBubbleAdmin : styles.msgBubbleCandidate,
+                      ]}
+                    >
+                      <Text style={styles.msgSender}>
+                        {msg.sender_role === 'admin' ? '🏛 Organisateur' : '👤 Vous'}
+                      </Text>
+                      <Text style={[
+                        styles.msgContent,
+                        msg.sender_role === 'admin' ? styles.msgContentAdmin : styles.msgContentCandidate,
+                      ]}>
+                        {msg.content}
+                      </Text>
+                      <Text style={styles.msgTime}>
+                        {new Date(msg.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
+                        {' · '}
+                        {new Date(msg.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
 
-            <View style={styles.codeReminder}>
-              <Text style={styles.codeReminderText}>Votre code d'accès : </Text>
-              <Text style={styles.codeReminderCode}>{candidature.access_code}</Text>
+              <View style={styles.replySection}>
+                <Text style={styles.replyLabel}>Répondre à l'organisateur</Text>
+                <TextInput
+                  style={styles.replyInput}
+                  value={reply}
+                  onChangeText={v => { setReply(v); setReplyError(''); }}
+                  placeholder="Votre message..."
+                  placeholderTextColor={Colors.textMuted}
+                  multiline
+                  numberOfLines={3}
+                  maxLength={500}
+                />
+                {replyError ? (
+                  <Text style={styles.replyError}>{replyError}</Text>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.replyBtn, (!reply.trim() || sendingReply) && styles.replyBtnDisabled]}
+                  onPress={handleReply}
+                  disabled={!reply.trim() || sendingReply}
+                >
+                  {sendingReply
+                    ? <ActivityIndicator color="#fff" size="small" />
+                    : <Text style={styles.replyBtnText}>Envoyer le message</Text>
+                  }
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </>
         )}
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -191,7 +307,8 @@ const styles = StyleSheet.create({
   errorBox:    { backgroundColor: '#FEE2E2', borderRadius: 10, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#FECACA' },
   errorText:   { color: '#DC2626', fontSize: 14 },
 
-  result:       { backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', marginTop: 8 },
+  // Résultat candidature
+  result:       { backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', marginTop: 8, marginBottom: 16 },
   statusBanner: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 18 },
   statusIcon:   { fontSize: 32 },
   statusLabel:  { fontSize: 18, fontWeight: 'bold', marginBottom: 4 },
@@ -208,4 +325,30 @@ const styles = StyleSheet.create({
   codeReminder: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 14, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.surface },
   codeReminderText: { color: Colors.textMuted, fontSize: 12 },
   codeReminderCode: { color: Colors.text, fontSize: 13, fontWeight: 'bold', letterSpacing: 2 },
+
+  // Messages
+  messagesCard:    { backgroundColor: Colors.card, borderRadius: 16, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
+  messagesHeader:  { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 18, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  messagesTitle:   { fontSize: 16, fontWeight: 'bold', color: Colors.text },
+  unreadBadge:     { backgroundColor: Colors.primary, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 3 },
+  unreadBadgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
+  noMessages:      { color: Colors.textMuted, fontSize: 14, padding: 24, textAlign: 'center', lineHeight: 20 },
+  messagesList:    { padding: 16, gap: 12 },
+  msgBubble:       { borderRadius: 12, padding: 14 },
+  msgBubbleAdmin:  { backgroundColor: '#EFF6FF', borderLeftWidth: 3, borderLeftColor: Colors.primary },
+  msgBubbleCandidate: { backgroundColor: Colors.surface, borderLeftWidth: 3, borderLeftColor: Colors.secondary, marginLeft: 16 },
+  msgSender:       { fontSize: 11, fontWeight: '700', color: Colors.textMuted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
+  msgContent:      { fontSize: 15, lineHeight: 22 },
+  msgContentAdmin: { color: Colors.text },
+  msgContentCandidate: { color: Colors.textSecondary },
+  msgTime:         { fontSize: 11, color: Colors.textMuted, marginTop: 8, textAlign: 'right' },
+
+  // Reply
+  replySection:  { padding: 16, borderTopWidth: 1, borderTopColor: Colors.border },
+  replyLabel:    { fontSize: 13, fontWeight: '600', color: Colors.textSecondary, marginBottom: 10 },
+  replyInput:    { backgroundColor: Colors.surface, borderRadius: 10, borderWidth: 1, borderColor: Colors.border, padding: 12, color: Colors.text, fontSize: 14, minHeight: 80, textAlignVertical: 'top', marginBottom: 10 },
+  replyError:    { color: Colors.error, fontSize: 13, marginBottom: 8 },
+  replyBtn:      { backgroundColor: Colors.primary, borderRadius: 10, padding: 14, alignItems: 'center' },
+  replyBtnDisabled: { opacity: 0.5 },
+  replyBtnText:  { color: '#fff', fontWeight: 'bold', fontSize: 15 },
 });
