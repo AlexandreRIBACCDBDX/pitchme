@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { Colors, StatusColors, StatusLabels } from '@/constants/theme';
 import MessageThread from '@/components/MessageThread';
 
-type Tab = 'info' | 'photos' | 'messages';
+type Tab = 'info' | 'messages';
 
 const STATUS_BG: Record<string, string> = {
   pending: '#FEF2F2', reviewing: '#FFFBEB', accepted: '#ECFDF5', rejected: '#F9FAFB',
@@ -23,7 +23,6 @@ const ACTIONS = [
 export default function AdminCandidatureDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [data, setData]       = useState<any>(null);
-  const [documents, setDocs]  = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab]         = useState<Tab>('info');
   const [notes, setNotes]     = useState('');
@@ -35,12 +34,11 @@ export default function AdminCandidatureDetail() {
   useEffect(() => { if (id) loadData(); }, [id]);
 
   async function loadData() {
-    const [{ data: cand }, { data: docs }] = await Promise.all([
-      (supabase.from('candidatures') as any).select('*, profiles(*)').eq('id', id).single(),
-      (supabase.from('documents') as any).select('*').eq('candidature_id', id),
-    ]);
+    const { data: cand } = await (supabase.from('candidatures') as any)
+      .select('*, profiles(*)')
+      .eq('id', id)
+      .single();
     if (cand) { setData(cand); setNotes(cand.admin_notes || ''); setRejectReason(cand.rejection_reason || ''); }
-    if (docs) setDocs(docs);
     setLoading(false);
   }
 
@@ -79,7 +77,7 @@ export default function AdminCandidatureDetail() {
   const p = data.profiles;
   const initials = (data.business_name?.[0] ?? '?').toUpperCase();
   const statusColor = StatusColors[data.status] ?? Colors.textSecondary;
-  const photos = documents.filter(d => d.file_type === 'image');
+  const photos: string[] = data.photo_urls ?? [];
 
   return (
     <View style={styles.root}>
@@ -114,7 +112,6 @@ export default function AdminCandidatureDetail() {
           <View style={styles.tabs}>
             {([
               { key: 'info',     label: 'Informations' },
-              { key: 'photos',   label: `Photos (${photos.length})` },
               { key: 'messages', label: 'Messages' },
             ] as { key: Tab; label: string }[]).map(t => (
               <TouchableOpacity key={t.key} style={[styles.tab, tab === t.key && styles.tabActive]} onPress={() => setTab(t.key)}>
@@ -227,31 +224,29 @@ export default function AdminCandidatureDetail() {
                 </Card>
               </Row2>
 
+              {/* ── Photos ── */}
+              {photos.length > 0 ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Photos ({photos.length})</Text>
+                  <View style={styles.photoGrid}>
+                    {photos.map((url, i) => (
+                      <View key={i} style={styles.photoWrap}>
+                        <Image source={{ uri: url }} style={styles.photo} resizeMode="cover" />
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : (
+                <View style={[styles.card, { alignItems: 'center', paddingVertical: 28 }]}>
+                  <Text style={{ fontSize: 28, marginBottom: 8 }}>📷</Text>
+                  <Text style={styles.cardTitle}>Aucune photo déposée</Text>
+                </View>
+              )}
+
               {data.status === 'rejected' && data.rejection_reason && (
                 <View style={styles.rejectionBanner}>
                   <Text style={styles.rejectionBannerTitle}>Motif de refus communiqué</Text>
                   <Text style={styles.rejectionBannerText}>{data.rejection_reason}</Text>
-                </View>
-              )}
-            </ScrollView>
-          )}
-
-          {/* ── Tab: Photos ── */}
-          {tab === 'photos' && (
-            <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentInner}>
-              {photos.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyIcon}>📷</Text>
-                  <Text style={styles.emptyText}>Aucune photo déposée</Text>
-                </View>
-              ) : (
-                <View style={styles.photoGrid}>
-                  {photos.map(doc => (
-                    <View key={doc.id} style={styles.photoWrap}>
-                      <Image source={{ uri: doc.file_url }} style={styles.photo} resizeMode="cover" />
-                      <Text style={styles.photoName} numberOfLines={1}>{doc.file_name}</Text>
-                    </View>
-                  ))}
                 </View>
               )}
             </ScrollView>
@@ -455,13 +450,9 @@ const styles = StyleSheet.create({
   rejectionBannerText:  { color: '#7F1D1D', fontSize: 13, lineHeight: 18 },
 
   // Photos
-  emptyState: { alignItems: 'center', paddingVertical: 60 },
-  emptyIcon:  { fontSize: 48, marginBottom: 12 },
-  emptyText:  { color: Colors.textMuted, fontSize: 15 },
-  photoGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
+  photoGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8 },
   photoWrap:  { width: '31%' },
   photo:      { width: '100%', aspectRatio: 1, borderRadius: 10, backgroundColor: Colors.border },
-  photoName:  { color: Colors.textSecondary, fontSize: 11, marginTop: 5, textAlign: 'center' },
 
   // Sidebar right
   avatarHero:   { alignItems: 'center', padding: 24, borderBottomWidth: 1, borderBottomColor: Colors.border },

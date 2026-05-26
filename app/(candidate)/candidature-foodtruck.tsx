@@ -139,6 +139,9 @@ export default function CandidatureFoodtruck() {
 
       const candidatureId = generateUUID();
       const accessCode = generateAccessCode();
+
+      const photoUrls = photos.length > 0 ? await uploadPhotos(photos, candidatureId) : [];
+
       const payload = {
         id:                  candidatureId,
         access_code:         accessCode,
@@ -164,14 +167,12 @@ export default function CandidatureFoodtruck() {
         electricity_needed:  form.powerNeeded !== 'none',
         previous_participant: form.previousParticipant,
         foodtruck_data:      foodtruckData,
+        photo_urls:          photoUrls.length > 0 ? photoUrls : null,
       };
 
       const { error } = await (supabase.from('candidatures') as any).insert(payload);
       if (error) throw error;
 
-      if (photos.length > 0) {
-        uploadPhotos(photos, candidatureId);
-      }
       router.replace({ pathname: '/(candidate)', params: { code: accessCode } });
     } catch (e: any) {
       console.error('[FoodTruck submit]', e);
@@ -188,15 +189,15 @@ export default function CandidatureFoodtruck() {
     }
   }
 
-  async function uploadPhotos(photoList: any[], candidatureId: string) {
+  async function uploadPhotos(photoList: any[], candidatureId: string): Promise<string[]> {
     const mimeMap: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic' };
+    const urls: string[] = [];
     for (const photo of photoList) {
       try {
         const rawExt = (photo.name ?? '').split('.').pop()?.toLowerCase() || 'jpg';
         const ext = rawExt === 'jpg' ? 'jpeg' : rawExt;
         const mime = mimeMap[rawExt] ?? 'image/jpeg';
-        const fileName = photo.name || `photo_${Date.now()}.${ext}`;
-        const path = `${candidatureId}/${Date.now()}.${ext}`;
+        const path = `${candidatureId}/${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
         const response = await fetch(photo.uri);
         const blob = await response.blob();
         const { data: uploadData, error: storageError } = await supabase.storage
@@ -204,16 +205,11 @@ export default function CandidatureFoodtruck() {
         if (storageError) { console.warn('[Photo upload]', storageError.message); continue; }
         if (uploadData) {
           const { data: { publicUrl } } = supabase.storage.from('product-photos').getPublicUrl(path);
-          await (supabase.from('documents') as any).insert({
-            candidature_id: candidatureId,
-            file_name: fileName,
-            file_url: publicUrl,
-            file_type: 'image',
-            doc_category: 'product_photo',
-          });
+          urls.push(publicUrl);
         }
       } catch (e) { console.warn('[Photo upload exception]', e); }
     }
+    return urls;
   }
 
   return (
