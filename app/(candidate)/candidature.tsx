@@ -16,6 +16,13 @@ function generateAccessCode(): string {
   return `${r()}${r()}${r()}${r()}-${r()}${r()}${r()}${r()}`;
 }
 
+function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
 export default function CandidatureForm() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -100,8 +107,10 @@ export default function CandidatureForm() {
       Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('Délai dépassé — vérifiez votre connexion réseau')), 12000))]);
 
     try {
+      const candidatureId = generateUUID();
       const accessCode = generateAccessCode();
       const payload = {
+        id:                 candidatureId,
         access_code:        accessCode,
         caution_accepted:   form.cautionAccepted,
         contact_first_name: form.contactFirstName.trim(),
@@ -123,11 +132,11 @@ export default function CandidatureForm() {
         candidature_type:   'market',
       };
 
-      const { data, error } = await deadline((supabase.from('candidatures') as any).insert(payload).select('id').maybeSingle()) as any;
+      const { error } = await deadline((supabase.from('candidatures') as any).insert(payload)) as any;
       if (error) { console.error('[Submit] insert error:', error); setErrorMsg(error.message); return; }
 
-      if (photos.length > 0 && data?.id) {
-        uploadPhotos(photos, data.id);
+      if (photos.length > 0) {
+        uploadPhotos(photos, candidatureId);
       }
       router.replace({ pathname: '/(candidate)', params: { code: accessCode } });
     } catch (e: any) {
