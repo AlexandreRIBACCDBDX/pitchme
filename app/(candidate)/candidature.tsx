@@ -73,26 +73,31 @@ export default function CandidatureForm() {
   }
 
   async function uploadPhotos(photoList: any[], candidatureId: string) {
+    const mimeMap: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', heic: 'image/heic' };
     for (const photo of photoList) {
       try {
-        const ext = (photo.name ?? 'photo').split('.').pop() || 'jpg';
+        const rawExt = (photo.name ?? '').split('.').pop()?.toLowerCase() || 'jpg';
+        const ext = rawExt === 'jpg' ? 'jpeg' : rawExt;
+        const mime = mimeMap[rawExt] ?? 'image/jpeg';
+        const fileName = photo.name || `photo_${Date.now()}.${ext}`;
         const path = `${candidatureId}/${Date.now()}.${ext}`;
         const response = await fetch(photo.uri);
         const blob = await response.blob();
-        const { data: uploadData } = await supabase.storage
+        const { data: uploadData, error: storageError } = await supabase.storage
           .from('product-photos')
-          .upload(path, blob, { contentType: `image/${ext}` });
+          .upload(path, blob, { contentType: mime });
+        if (storageError) { console.warn('[Photo upload]', storageError.message); continue; }
         if (uploadData) {
           const { data: { publicUrl } } = supabase.storage.from('product-photos').getPublicUrl(path);
           await (supabase.from('documents') as any).insert({
             candidature_id: candidatureId,
-            file_name: photo.name,
+            file_name: fileName,
             file_url: publicUrl,
             file_type: 'image',
             doc_category: 'product_photo',
           });
         }
-      } catch {}
+      } catch (e) { console.warn('[Photo upload exception]', e); }
     }
   }
 
