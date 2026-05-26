@@ -10,6 +10,12 @@ import SiretInput from '@/components/SiretInput';
 import PhotoPicker from '@/components/PhotoPicker';
 import type { SiretData } from '@/lib/siret';
 
+function generateAccessCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const r = () => chars[Math.floor(Math.random() * chars.length)];
+  return `${r()}${r()}${r()}${r()}-${r()}${r()}${r()}${r()}`;
+}
+
 export default function CandidatureForm() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -33,6 +39,7 @@ export default function CandidatureForm() {
     instagramUrl: '',
     electricityNeeded: false,
     previousParticipant: false,
+    cautionAccepted: false,
   });
   const [photos, setPhotos] = useState<any[]>([]);
 
@@ -54,6 +61,7 @@ export default function CandidatureForm() {
   function validateStep2() {
     if (!form.productCategory) return 'Catégorie de produits requise';
     if (!form.productDescription || form.productDescription.length < 20) return 'Description requise (min. 20 caractères)';
+    if (!form.cautionAccepted) return 'Vous devez accepter la condition de caution pour continuer';
     return null;
   }
 
@@ -92,7 +100,10 @@ export default function CandidatureForm() {
       Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('Délai dépassé — vérifiez votre connexion réseau')), 12000))]);
 
     try {
+      const accessCode = generateAccessCode();
       const payload = {
+        access_code:        accessCode,
+        caution_accepted:   form.cautionAccepted,
         contact_first_name: form.contactFirstName.trim(),
         contact_last_name:  form.contactLastName.trim(),
         contact_email:      form.contactEmail.trim(),
@@ -118,7 +129,7 @@ export default function CandidatureForm() {
       if (photos.length > 0 && data?.id) {
         uploadPhotos(photos, data.id);
       }
-      router.replace('/(candidate)');
+      router.replace({ pathname: '/(candidate)', params: { code: accessCode } });
     } catch (e: any) {
       console.error('[Submit] exception:', e);
       setErrorMsg(e?.message ?? 'Erreur réseau. Vérifiez votre connexion.');
@@ -264,6 +275,19 @@ export default function CandidatureForm() {
             <Text style={styles.hint}>Ajoutez jusqu'à 6 photos de vos produits</Text>
             <PhotoPicker onPhotosChange={setPhotos} maxPhotos={6} />
 
+            <View style={styles.cautionBox}>
+              <Text style={styles.cautionTitle}>⚠️ Caution de présence</Text>
+              <Text style={styles.cautionText}>
+                Afin de garantir la présence des exposants et d'éviter les désistements de dernière minute, une caution vous sera demandée lors de la confirmation de votre place. Elle sera restituée à l'issue du marché.
+              </Text>
+              <TouchableOpacity style={styles.cautionCheck} onPress={() => update('cautionAccepted', !form.cautionAccepted)} activeOpacity={0.7}>
+                <View style={[styles.checkbox, form.cautionAccepted && styles.checkboxChecked]}>
+                  {form.cautionAccepted && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <Text style={styles.cautionCheckLabel}>J'ai lu et j'accepte la condition de caution</Text>
+              </TouchableOpacity>
+            </View>
+
             {errorMsg ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{errorMsg}</Text>
@@ -318,6 +342,14 @@ const styles = StyleSheet.create({
   submitBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
   errorBox: { backgroundColor: '#FEE2E2', borderRadius: 10, padding: 12, marginBottom: 16, borderWidth: 1, borderColor: '#FECACA' },
   errorText: { color: '#DC2626', fontSize: 14 },
+  cautionBox:        { backgroundColor: '#FFFBEB', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#FDE68A' },
+  cautionTitle:      { color: '#92400E', fontWeight: 'bold', fontSize: 14, marginBottom: 8 },
+  cautionText:       { color: '#78350F', fontSize: 13, lineHeight: 20, marginBottom: 14 },
+  cautionCheck:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  checkbox:          { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: '#D97706', justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  checkboxChecked:   { backgroundColor: '#D97706', borderColor: '#D97706' },
+  checkmark:         { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  cautionCheckLabel: { flex: 1, color: '#78350F', fontSize: 13, fontWeight: '600' },
   instagramRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
   instagramPrefix: { backgroundColor: Colors.card, borderWidth: 1, borderColor: Colors.border, borderRightWidth: 0, borderTopLeftRadius: 10, borderBottomLeftRadius: 10, padding: 14, justifyContent: 'center' },
   instagramAt: { color: Colors.textSecondary, fontSize: 16, fontWeight: 'bold' },

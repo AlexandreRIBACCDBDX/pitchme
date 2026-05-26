@@ -128,10 +128,19 @@ export default function AdminCandidatureDetail() {
             <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentInner}>
               <Row2>
                 <Card title="Contact">
-                  <Field label="Prénom"    value={p?.first_name} />
-                  <Field label="Nom"       value={p?.last_name} />
-                  <Field label="Email"     value={p?.email} />
-                  <Field label="Téléphone" value={p?.phone || '—'} />
+                  <Field label="Prénom"    value={data.contact_first_name || p?.first_name} />
+                  <Field label="Nom"       value={data.contact_last_name  || p?.last_name} />
+                  <Field label="Email"     value={data.contact_email      || p?.email} />
+                  <Field label="Téléphone" value={data.contact_phone      || p?.phone || '—'} />
+                  {data.access_code ? (
+                    <View style={styles.field}>
+                      <Text style={styles.fieldLabel}>Code d'accès candidat</Text>
+                      <Text style={[styles.fieldValue, styles.fieldMono, { color: Colors.primary, letterSpacing: 2 }]}>{data.access_code}</Text>
+                    </View>
+                  ) : null}
+                  {data.caution_accepted !== undefined && (
+                    <Field label="Caution acceptée" value={data.caution_accepted ? '✓ Oui' : '✗ Non'} />
+                  )}
                 </Card>
                 <Card title="Entreprise">
                   <Field label="Raison sociale" value={data.business_name} />

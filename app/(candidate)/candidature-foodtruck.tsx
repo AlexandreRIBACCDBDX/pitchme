@@ -22,6 +22,12 @@ const SPECIAL_DIETS = ['Végétarien', 'Vegan', 'Sans gluten', 'Halal', 'Kasher'
 
 interface MenuItem { name: string; price: string; }
 
+function generateAccessCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const r = () => chars[Math.floor(Math.random() * chars.length)];
+  return `${r()}${r()}${r()}${r()}-${r()}${r()}${r()}${r()}`;
+}
+
 export default function CandidatureFoodtruck() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -52,6 +58,7 @@ export default function CandidatureFoodtruck() {
     previousParticipant: false,
     menuItems: [{ name: '', price: '' }] as MenuItem[],
     beverages: '',
+    cautionAccepted: false,
   });
 
   function update(field: string, value: any) {
@@ -99,6 +106,7 @@ export default function CandidatureFoodtruck() {
     if (!form.vehicleLength) return 'Longueur du véhicule requise';
     const validItems = form.menuItems.filter(i => i.name.trim());
     if (validItems.length === 0) return 'Au moins un plat requis dans la carte';
+    if (!form.cautionAccepted) return 'Vous devez accepter la condition de caution pour continuer';
     return null;
   }
 
@@ -122,7 +130,10 @@ export default function CandidatureFoodtruck() {
         beverages:      form.beverages,
       };
 
+      const accessCode = generateAccessCode();
       const payload = {
+        access_code:         accessCode,
+        caution_accepted:    form.cautionAccepted,
         contact_first_name:  form.contactFirstName.trim(),
         contact_last_name:   form.contactLastName.trim(),
         contact_email:       form.contactEmail.trim(),
@@ -155,7 +166,7 @@ export default function CandidatureFoodtruck() {
       if (photos.length > 0 && data?.id) {
         uploadPhotos(photos, data.id);
       }
-      router.replace('/(candidate)');
+      router.replace({ pathname: '/(candidate)', params: { code: accessCode } });
     } catch (e: any) {
       console.error('[FoodTruck submit]', e);
       const code: string = e?.code ?? '';
@@ -371,6 +382,19 @@ export default function CandidatureFoodtruck() {
             <Text style={styles.hint}>Ajoutez jusqu'à 6 photos</Text>
             <PhotoPicker onPhotosChange={setPhotos} maxPhotos={6} />
 
+            <View style={styles.cautionBox}>
+              <Text style={styles.cautionTitle}>⚠️ Caution de présence</Text>
+              <Text style={styles.cautionText}>
+                Afin de garantir la présence des exposants et d'éviter les désistements de dernière minute, une caution vous sera demandée lors de la confirmation de votre place. Elle sera restituée à l'issue du marché.
+              </Text>
+              <TouchableOpacity style={styles.cautionCheck} onPress={() => update('cautionAccepted', !form.cautionAccepted)} activeOpacity={0.7}>
+                <View style={[styles.checkbox, form.cautionAccepted && styles.checkboxChecked]}>
+                  {form.cautionAccepted && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <Text style={styles.cautionCheckLabel}>J'ai lu et j'accepte la condition de caution</Text>
+              </TouchableOpacity>
+            </View>
+
             {errorMsg ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorBoxText}>{errorMsg}</Text>
@@ -441,4 +465,12 @@ const styles = StyleSheet.create({
   submitBtn:      { backgroundColor: Colors.secondary, borderRadius: 10, padding: 18, alignItems: 'center', marginTop: 24 },
   submitBtnDisabled: { opacity: 0.6 },
   submitBtnText:  { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  cautionBox:        { backgroundColor: '#FFFBEB', borderRadius: 12, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#FDE68A' },
+  cautionTitle:      { color: '#92400E', fontWeight: 'bold', fontSize: 14, marginBottom: 8 },
+  cautionText:       { color: '#78350F', fontSize: 13, lineHeight: 20, marginBottom: 14 },
+  cautionCheck:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  checkbox:          { width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: '#D97706', justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' },
+  checkboxChecked:   { backgroundColor: '#D97706', borderColor: '#D97706' },
+  checkmark:         { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  cautionCheckLabel: { flex: 1, color: '#78350F', fontSize: 13, fontWeight: '600' },
 });

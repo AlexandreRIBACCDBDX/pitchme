@@ -7,6 +7,7 @@ export default function CandidateLayout() {
       <Stack.Screen name="choisir-candidature" />
       <Stack.Screen name="candidature" />
       <Stack.Screen name="candidature-foodtruck" />
+      <Stack.Screen name="mon-espace" />
     </Stack>
   );
 }

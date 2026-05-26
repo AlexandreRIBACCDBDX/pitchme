@@ -79,6 +79,10 @@ export default function ChoisirCandidature() {
         </TouchableOpacity>
       </View>
 
+      <TouchableOpacity style={styles.mySpaceBtn} onPress={() => router.push('/(candidate)/mon-espace')}>
+        <Text style={styles.mySpaceBtnText}>🔍 Consulter mon dossier</Text>
+      </TouchableOpacity>
+
       <TouchableOpacity style={styles.adminLink} onPress={() => router.push('/(auth)/login')}>
         <Text style={styles.adminLinkText}>Accès organisateur</Text>
       </TouchableOpacity>
@@ -110,6 +114,8 @@ const styles = StyleSheet.create({
   cardBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
   disabledBadge:     { backgroundColor: Colors.surface, borderRadius: 10, padding: 12, alignItems: 'center', borderWidth: 1, borderColor: Colors.border },
   disabledBadgeText: { color: Colors.textMuted, fontSize: 13 },
-  adminLink:   { marginTop: 40, alignItems: 'center' },
-  adminLinkText: { color: Colors.textMuted, fontSize: 12 },
+  mySpaceBtn:     { marginTop: 28, borderWidth: 1, borderColor: Colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  mySpaceBtnText: { color: Colors.primary, fontWeight: '600', fontSize: 15 },
+  adminLink:      { marginTop: 16, alignItems: 'center' },
+  adminLinkText:  { color: Colors.textMuted, fontSize: 12 },
 });
