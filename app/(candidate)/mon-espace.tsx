@@ -385,6 +385,20 @@ export default function MonEspace() {
           </>
         )}
 
+        {/* ── Nouvelle candidature ── */}
+        <View style={styles.newCandidatureBox}>
+          <Text style={styles.newCandidatureTitle}>Déposer une autre candidature</Text>
+          <Text style={styles.newCandidatureDesc}>
+            Vous souhaitez candidater avec une autre activité ou un autre stand ?
+          </Text>
+          <TouchableOpacity
+            style={styles.newCandidatureBtn}
+            onPress={() => router.push('/(candidate)/choisir-candidature')}
+          >
+            <Text style={styles.newCandidatureBtnText}>+ Nouvelle candidature</Text>
+          </TouchableOpacity>
+        </View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -468,4 +482,11 @@ const styles = StyleSheet.create({
   replyBtn:      { backgroundColor: Colors.primary, borderRadius: 10, padding: 14, alignItems: 'center' },
   replyBtnDisabled: { opacity: 0.5 },
   replyBtnText:  { color: '#fff', fontWeight: 'bold', fontSize: 15 },
+
+  // Nouvelle candidature
+  newCandidatureBox:     { marginTop: 28, borderWidth: 1, borderColor: Colors.border, borderRadius: 16, padding: 20, alignItems: 'center', backgroundColor: Colors.card },
+  newCandidatureTitle:   { fontSize: 15, fontWeight: 'bold', color: Colors.text, marginBottom: 6 },
+  newCandidatureDesc:    { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', lineHeight: 19, marginBottom: 16 },
+  newCandidatureBtn:     { borderWidth: 1.5, borderColor: Colors.primary, borderRadius: 10, paddingVertical: 12, paddingHorizontal: 24 },
+  newCandidatureBtnText: { color: Colors.primary, fontWeight: '700', fontSize: 14 },
 });
