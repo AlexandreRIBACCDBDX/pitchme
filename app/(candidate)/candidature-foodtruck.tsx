@@ -173,6 +173,11 @@ export default function CandidatureFoodtruck() {
       const { error } = await (supabase.from('candidatures') as any).insert(payload);
       if (error) throw error;
 
+      // Email de confirmation avec le code d'accès (fire and forget)
+      supabase.functions.invoke('confirm-submission', {
+        body: { candidature_id: candidatureId },
+      }).catch(() => {});
+
       router.replace({ pathname: '/(candidate)', params: { code: accessCode } });
     } catch (e: any) {
       console.error('[FoodTruck submit]', e);

@@ -145,13 +145,18 @@ export default function MonEspace() {
     setReplyError('');
     setSendingReply(true);
     try {
+      const content = reply.trim();
       const { error: rpcError } = await supabase.rpc('send_candidate_message', {
         p_code: cleaned,
-        p_content: reply.trim(),
+        p_content: content,
       });
       if (rpcError) throw rpcError;
       setReply('');
       await loadMessages(cleaned);
+      // Notifier l'admin (fire and forget)
+      supabase.functions.invoke('notify-admin', {
+        body: { candidature_id: candidature.id, message_content: content },
+      }).catch(() => {});
     } catch (e: any) {
       setReplyError(e?.message ?? 'Erreur lors de l\'envoi. Réessayez.');
     } finally {

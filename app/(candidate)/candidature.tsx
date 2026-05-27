@@ -139,6 +139,11 @@ export default function CandidatureForm() {
       const { error } = await deadline((supabase.from('candidatures') as any).insert(payload)) as any;
       if (error) { console.error('[Submit] insert error:', error); setErrorMsg(error.message); return; }
 
+      // Email de confirmation avec le code d'accès (fire and forget)
+      supabase.functions.invoke('confirm-submission', {
+        body: { candidature_id: candidatureId },
+      }).catch(() => {});
+
       router.replace({ pathname: '/(candidate)', params: { code: accessCode } });
     } catch (e: any) {
       console.error('[Submit] exception:', e);

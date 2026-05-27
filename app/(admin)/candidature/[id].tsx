@@ -58,7 +58,16 @@ export default function AdminCandidatureDetail() {
     };
     if (msgs[status]) {
       const { data: { user } } = await supabase.auth.getUser();
-      await (supabase.from('messages') as any).insert({ candidature_id: id, sender_id: user!.id, content: msgs[status] });
+      await (supabase.from('messages') as any).insert({
+        candidature_id: id,
+        sender_id: user!.id,
+        sender_role: 'admin',
+        content: msgs[status],
+      });
+      // Email au candidat (fire and forget)
+      supabase.functions.invoke('notify-message', {
+        body: { candidature_id: id, content: msgs[status] },
+      }).catch(() => {});
     }
 
     setData((d: any) => ({ ...d, status, rejection_reason: reason ?? rejectReason }));
