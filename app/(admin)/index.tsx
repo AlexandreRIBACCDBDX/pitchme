@@ -6,8 +6,9 @@ import {
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Colors, StatusColors } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
+import CandidatureDetailPanel from '@/components/CandidatureDetailPanel';
 
 // ─── Catégorie → icône ────────────────────────────────────────────────────────
 const CAT_ICON: Record<string, string> = {
@@ -59,7 +60,7 @@ export default function AdminDashboard() {
   const [loading,      setLoading]      = useState(true);
   const [refreshing,   setRefreshing]   = useState(false);
   const [search,       setSearch]       = useState('');
-  const [selected,     setSelected]     = useState<any>(null);
+  const [selectedId,   setSelectedId]   = useState<string | null>(null);
   const [updating,     setUpdating]     = useState(false);
   const [rtStatus,     setRtStatus]     = useState<'connecting' | 'connected' | 'error'>('connecting');
   const [lastUpdated,  setLastUpdated]  = useState('');
@@ -81,7 +82,6 @@ export default function AdminDashboard() {
       .order('created_at', { ascending: false });
     if (data) {
       setCandidatures(data);
-      setSelected((s: any) => s ? (data.find((c: any) => c.id === s.id) ?? null) : null);
     }
     setLastUpdated(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
@@ -242,8 +242,8 @@ export default function AdminDashboard() {
                       item={item}
                       col={col}
                       index={idx}
-                      isSelected={selected?.id === item.id}
-                      onPress={setSelected}
+                      isSelected={selectedId === item.id}
+                      onPress={(i) => setSelectedId(i.id)}
                       onAction={updateStatus}
                       disabled={updating}
                     />
@@ -256,79 +256,14 @@ export default function AdminDashboard() {
         </ScrollView>
       </View>
 
-      {/* ── Panneau détail ──────────────────────────────────────────────────── */}
-      {selected && (
+      {/* ── Panneau détail (fiche complète inline) ──────────────────────── */}
+      {selectedId && (
         <View style={styles.detail}>
-          <TouchableOpacity style={styles.closeBtn} onPress={() => setSelected(null)}>
-            <Text style={styles.closeBtnText}>✕</Text>
-          </TouchableOpacity>
-
-          <View style={styles.detailHead}>
-            <Text style={styles.detailIcon}>{catIcon(selected.product_category)}</Text>
-            <Text style={styles.detailName}>{selected.business_name}</Text>
-            <Text style={styles.detailCat}>
-              {selected.product_category}
-              {selected.candidature_type === 'foodtruck' ? ' · 🚚 Food Truck' : ''}
-            </Text>
-            <View style={[styles.detailStatusPill, { backgroundColor: StatusColors[selected.status] + '20' }]}>
-              <View style={[styles.detailStatusDot, { backgroundColor: StatusColors[selected.status] }]} />
-              <Text style={[styles.detailStatusText, { color: StatusColors[selected.status] }]}>
-                {COLUMNS.find(c => c.key === selected.status)?.label ?? selected.status}
-              </Text>
-            </View>
-          </View>
-
-          {/* Actions rapides */}
-          <View style={styles.detailActions}>
-            {(NEXT[selected.status] ?? []).map(a => (
-              <TouchableOpacity
-                key={a.status}
-                style={[styles.detailActionBtn, { backgroundColor: a.color }]}
-                onPress={() => updateStatus(selected.id, a.status)}
-                disabled={updating}
-              >
-                <Text style={styles.detailActionText}>{a.label}</Text>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={[styles.detailActionBtn, { backgroundColor: Colors.primary }]}
-              onPress={() => router.push(`/(admin)/candidature/${selected.id}`)}
-            >
-              <Text style={styles.detailActionText}>Dossier complet →</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.detailScroll}>
-            <Block title="CONTACT">
-              <Row label="Nom"    value={`${selected.contact_first_name ?? selected.profiles?.first_name ?? ''} ${selected.contact_last_name ?? selected.profiles?.last_name ?? ''}`.trim() || '—'} />
-              <Row label="Email"  value={selected.contact_email  ?? selected.profiles?.email ?? '—'} />
-              {(selected.contact_phone || selected.profiles?.phone) &&
-                <Row label="Tél." value={selected.contact_phone ?? selected.profiles?.phone} />}
-            </Block>
-            <Block title="ENTREPRISE">
-              <Row label="SIRET"   value={selected.siret} />
-              <Row label="Adresse" value={`${selected.address}, ${selected.postal_code} ${selected.city}`} />
-              {selected.website_url   && <Row label="Site"      value={selected.website_url} />}
-              {selected.instagram_url && <Row label="Instagram" value={`@${selected.instagram_url}`} />}
-            </Block>
-            <Block title="PRODUITS">
-              <Text style={styles.detailDesc}>{selected.product_description}</Text>
-            </Block>
-            <Block title="LOGISTIQUE">
-              <Row label="Électricité"    value={selected.electricity_needed   ? 'Oui' : 'Non'} />
-              <Row label="Ancien exposant" value={selected.previous_participant ? 'Oui' : 'Non'} />
-            </Block>
-            {selected.admin_notes ? (
-              <Block title="NOTES INTERNES">
-                <Text style={styles.detailDesc}>{selected.admin_notes}</Text>
-              </Block>
-            ) : null}
-            <Block title="HISTORIQUE">
-              <Text style={styles.detailDate}>
-                Déposée le {new Date(selected.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
-              </Text>
-            </Block>
-          </ScrollView>
+          <CandidatureDetailPanel
+            candidatureId={selectedId}
+            onClose={() => setSelectedId(null)}
+            onStatusChange={load}
+          />
         </View>
       )}
     </View>
@@ -411,24 +346,6 @@ function SbItem({ dot, label, count, urgent }: { dot: string; label: string; cou
   );
 }
 
-// ─── Helpers détail ───────────────────────────────────────────────────────────
-function Block({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.block}>
-      <Text style={styles.blockTitle}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-function Row({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue}>{value || '—'}</Text>
-    </View>
-  );
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
@@ -502,25 +419,5 @@ const styles = StyleSheet.create({
   chipText:   { fontSize: 11, fontWeight: '600' },
 
   // ── Panneau détail
-  detail:    { width: 280, backgroundColor: '#fff', borderLeftWidth: 1, borderLeftColor: Colors.border },
-  closeBtn:  { position: 'absolute', top: 12, right: 12, zIndex: 10, padding: 6 },
-  closeBtnText: { color: Colors.textMuted, fontSize: 16 },
-  detailHead: { alignItems: 'center', padding: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  detailIcon: { fontSize: 40, marginBottom: 8 },
-  detailName: { fontSize: 15, fontWeight: '800', color: Colors.text, textAlign: 'center' },
-  detailCat:  { fontSize: 12, color: Colors.textSecondary, marginTop: 3, textAlign: 'center' },
-  detailStatusPill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5, marginTop: 10 },
-  detailStatusDot:  { width: 7, height: 7, borderRadius: 4 },
-  detailStatusText: { fontSize: 12, fontWeight: '700' },
-  detailActions: { padding: 12, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 7 },
-  detailActionBtn:  { borderRadius: 8, padding: 10, alignItems: 'center' },
-  detailActionText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  detailScroll: { flex: 1 },
-  block:      { padding: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  blockTitle: { fontSize: 9, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1, marginBottom: 9, textTransform: 'uppercase' },
-  row:        { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
-  rowLabel:   { fontSize: 11, color: Colors.textSecondary },
-  rowValue:   { fontSize: 11, color: Colors.text, fontWeight: '500', flex: 1, textAlign: 'right' },
-  detailDesc: { fontSize: 12, color: Colors.text, lineHeight: 18 },
-  detailDate: { fontSize: 11, color: Colors.textSecondary },
+  detail: { width: 460, borderLeftWidth: 1, borderLeftColor: Colors.border },
 });
