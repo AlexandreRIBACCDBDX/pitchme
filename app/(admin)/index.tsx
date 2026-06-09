@@ -55,6 +55,7 @@ export default function AdminDashboard() {
   const [search,       setSearch]       = useState('');
   const [selectedId,   setSelectedId]   = useState<string | null>(null);
   const [updating,     setUpdating]     = useState(false);
+  const [unreadMap,    setUnreadMap]    = useState<Record<string, number>>({});
   const [rtOk,         setRtOk]         = useState(false);
   const [refreshing,   setRefreshing]   = useState(false);
   const [lastRefresh,  setLastRefresh]  = useState('');
@@ -63,15 +64,27 @@ export default function AdminDashboard() {
     load();
     const ch = supabase.channel('admin-rt-v2')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'candidatures' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, load)
       .subscribe(s => setRtOk(s === 'SUBSCRIBED'));
     return () => { supabase.removeChannel(ch); };
   }, []);
 
   async function load() {
-    const { data } = await (supabase.from('candidatures') as any)
-      .select('*, profiles(*)')
-      .order('created_at', { ascending: false });
-    if (data) setCandidatures(data);
+    const [{ data: cands }, { data: msgs }] = await Promise.all([
+      (supabase.from('candidatures') as any)
+        .select('*, profiles(*)')
+        .order('created_at', { ascending: false }),
+      (supabase.from('messages') as any)
+        .select('candidature_id')
+        .eq('sender_role', 'candidate')
+        .eq('is_read', false),
+    ]);
+    if (cands) setCandidatures(cands);
+    if (msgs) {
+      const map: Record<string, number> = {};
+      msgs.forEach((m: any) => { map[m.candidature_id] = (map[m.candidature_id] ?? 0) + 1; });
+      setUnreadMap(map);
+    }
     setLastRefresh(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
     setRefreshing(false);
@@ -98,7 +111,9 @@ export default function AdminDashboard() {
 
   const grouped  = Object.fromEntries(COLUMNS.map(col => [col.key, filtered.filter(c => c.status === col.key)]));
   const counts   = Object.fromEntries(COLUMNS.map(col => [col.key, candidatures.filter(c => c.status === col.key).length]));
-  const toAction = counts.pending + counts.reviewing;
+  const toAction    = counts.pending + counts.reviewing;
+  const totalUnread = Object.values(unreadMap).reduce((a, b) => a + b, 0);
+  const unreadCands = Object.keys(unreadMap).length;
 
   const acceptRate = candidatures.length
     ? Math.round((counts.accepted / candidatures.length) * 100)
@@ -145,24 +160,20 @@ export default function AdminDashboard() {
           <Text style={styles.countdownLabel}>🎄 {MARKET_DATE.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
         </View>
 
-        {/* Nav statuts */}
-        <Text style={styles.navSection}>DOSSIERS</Text>
-        {[
-          { label: 'Tous',         count: candidatures.length, color: '#64748B' },
-          { label: 'À traiter',    count: toAction,            color: '#F59E0B', urgent: toAction > 0 },
-          { label: 'En attente',   count: counts.pending,      color: '#F59E0B' },
-          { label: 'En étude',     count: counts.reviewing,    color: '#2563EB' },
-          { label: 'Retenus',      count: counts.accepted,     color: '#059669' },
-          { label: 'Non retenus',  count: counts.rejected,     color: '#6B7280' },
-        ].map(({ label, count, color, urgent }) => (
-          <View key={label} style={styles.navItem}>
-            <View style={[styles.navDot, { backgroundColor: color }]} />
-            <Text style={[styles.navLabel, urgent && styles.navLabelUrgent]}>{label}</Text>
-            <View style={[styles.navPill, { backgroundColor: color + (urgent ? 'CC' : '33') }]}>
-              <Text style={[styles.navPillText, { color: urgent ? '#fff' : color }]}>{count}</Text>
+        {/* Messages non lus */}
+        {unreadCands > 0 && (
+          <View style={styles.unreadBlock}>
+            <Text style={styles.unreadBlockTitle}>💬 MESSAGES</Text>
+            <View style={styles.unreadBlockRow}>
+              <Text style={styles.unreadBlockText}>
+                {unreadCands} dossier{unreadCands > 1 ? 's' : ''} avec réponse
+              </Text>
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadBadgeText}>{totalUnread}</Text>
+              </View>
             </View>
           </View>
-        ))}
+        )}
 
         {/* Catégories actives */}
         {catCounts.length > 0 && (
@@ -219,6 +230,7 @@ export default function AdminDashboard() {
           <KpiCard value={toAction}            label="À traiter"    color="#F59E0B" icon="⚡" urgent={toAction > 0} />
           <KpiCard value={counts.accepted}     label="Retenus"      color="#059669" icon="✅" />
           <KpiCard value={`${acceptRate}%`}    label="Taux retenu"  color="#2563EB" icon="📊" />
+          <KpiCard value={totalUnread}         label="Msgs candidats" color="#EC4899" icon="💬" urgent={totalUnread > 0} />
         </View>
 
         {/* ── Search bar ──────────────────────────────────────────────────── */}
@@ -279,6 +291,7 @@ export default function AdminDashboard() {
                       col={col}
                       idx={idx}
                       selected={selectedId === item.id}
+                      unreadCount={unreadMap[item.id] ?? 0}
                       onPress={() => setSelectedId(item.id === selectedId ? null : item.id)}
                       onAction={updateStatus}
                       disabled={updating}
@@ -326,9 +339,9 @@ function KpiCard({ value, label, color, icon, urgent }: {
 }
 
 // ─── Carte kanban ─────────────────────────────────────────────────────────────
-function KCard({ item, col, idx, selected, onPress, onAction, disabled }: {
+function KCard({ item, col, idx, selected, unreadCount, onPress, onAction, disabled }: {
   item: any; col: (typeof COLUMNS)[number]; idx: number;
-  selected: boolean; onPress: () => void;
+  selected: boolean; unreadCount: number; onPress: () => void;
   onAction: (id: string, s: string) => void; disabled: boolean;
 }) {
   const icon    = item.candidature_type === 'foodtruck' ? '🚚' : catIcon(item.product_category);
@@ -361,6 +374,11 @@ function KCard({ item, col, idx, selected, onPress, onAction, disabled }: {
             </View>
           )}
           {item.admin_notes ? <Text style={styles.notesMark}>📝</Text> : null}
+          {unreadCount > 0 && (
+            <View style={styles.msgBadge}>
+              <Text style={styles.msgBadgeText}>💬 {unreadCount}</Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -553,6 +571,18 @@ const styles = StyleSheet.create({
   cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
   actionChip:  { borderRadius: 6, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 4 },
   actionChipText: { fontSize: 11, fontWeight: '600' },
+
+  // Messages non lus (sidebar)
+  unreadBlock:      { backgroundColor: '#1E293B', borderRadius: 10, padding: 12, marginBottom: 16 },
+  unreadBlockTitle: { fontSize: 9, fontWeight: '700', color: '#EC4899', letterSpacing: 1.2, marginBottom: 8 },
+  unreadBlockRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  unreadBlockText:  { fontSize: 11, color: '#94A3B8', flex: 1 },
+  unreadBadge:      { backgroundColor: '#EC4899', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  unreadBadgeText:  { color: '#fff', fontSize: 11, fontWeight: '800' },
+
+  // Badge message non lu sur carte
+  msgBadge:     { backgroundColor: '#EC4899', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2, flexDirection: 'row', alignItems: 'center' },
+  msgBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
 
   // ══════════════════ PANEL ══════════════════
   panel: {
