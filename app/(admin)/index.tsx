@@ -6,84 +6,73 @@ import {
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Colors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
 import CandidatureDetailPanel from '@/components/CandidatureDetailPanel';
 
-// ─── Catégorie → icône ────────────────────────────────────────────────────────
+// ─── Config ──────────────────────────────────────────────────────────────────
+const MARKET_DATE = new Date('2026-11-14');
+
 const CAT_ICON: Record<string, string> = {
-  'Artisanat / Déco':          '🎨',
+  'Artisanat / Déco':             '🎨',
   'Alimentation / Épicerie fine': '🧺',
-  'Bijoux / Accessoires':      '💍',
-  'Jouets / Enfants':          '🧸',
-  'Textile / Vêtements':       '👗',
-  'Cosmétiques / Bien-être':   '🧴',
-  'Livres / Art':              '📚',
-  'Plants / Fleurs':           '🌸',
-  'Boissons':                  '🍷',
-  'Restauration / Food Truck': '🚚',
-  'Autre':                     '🏪',
+  'Bijoux / Accessoires':         '💍',
+  'Jouets / Enfants':             '🧸',
+  'Textile / Vêtements':          '👗',
+  'Cosmétiques / Bien-être':      '🧴',
+  'Livres / Art':                 '📚',
+  'Plants / Fleurs':              '🌸',
+  'Boissons':                     '🍷',
+  'Restauration / Food Truck':    '🚚',
+  'Autre':                        '🏪',
 };
-function catIcon(category?: string | null): string {
-  if (!category) return '🏪';
-  if (category.toLowerCase().includes('food') || category.toLowerCase().includes('truck')) return '🚚';
-  return CAT_ICON[category] ?? '🏪';
+function catIcon(c?: string | null) {
+  if (!c) return '🏪';
+  if (c.toLowerCase().includes('food') || c.toLowerCase().includes('truck')) return '🚚';
+  return CAT_ICON[c] ?? '🏪';
 }
 
-// ─── Colonnes kanban ──────────────────────────────────────────────────────────
 const COLUMNS = [
-  { key: 'pending',   label: 'En attente', color: '#D97706', headerBg: '#FEF3C7', colBg: '#FFFBEB' },
-  { key: 'reviewing', label: 'En étude',   color: '#2563EB', headerBg: '#DBEAFE', colBg: '#EFF6FF' },
-  { key: 'accepted',  label: 'Retenus',    color: '#059669', headerBg: '#D1FAE5', colBg: '#F0FDF4', numbered: true },
-  { key: 'rejected',  label: 'Refusés',    color: '#6B7280', headerBg: '#F3F4F6', colBg: '#F9FAFB' },
+  { key: 'pending',   label: 'À traiter',   color: '#F59E0B', light: '#FFFBEB', dot: '#FEF3C7' },
+  { key: 'reviewing', label: 'En étude',    color: '#2563EB', light: '#EFF6FF', dot: '#DBEAFE' },
+  { key: 'accepted',  label: 'Retenus',     color: '#059669', light: '#F0FDF4', dot: '#D1FAE5', numbered: true },
+  { key: 'rejected',  label: 'Non retenus', color: '#6B7280', light: '#F9FAFB', dot: '#F3F4F6' },
 ] as const;
 
-// Actions disponibles par statut actuel
-const NEXT: Record<string, { status: string; label: string; color: string }[]> = {
-  pending:   [{ status: 'reviewing', label: '→ Étude',   color: '#F59E0B' },
-              { status: 'accepted',  label: '✓',          color: '#10B981' },
-              { status: 'rejected',  label: '✗',          color: '#EF4444' }],
-  reviewing: [{ status: 'accepted',  label: '✓ Retenir', color: '#10B981' },
-              { status: 'rejected',  label: '✗ Refuser', color: '#EF4444' },
-              { status: 'pending',   label: '↩',          color: '#94A3B8' }],
-  accepted:  [{ status: 'reviewing', label: '↩ Étude',   color: '#94A3B8' }],
+const QUICK_ACTIONS: Record<string, { status: string; label: string; color: string }[]> = {
+  pending:   [{ status: 'reviewing', label: 'Étudier →', color: '#F59E0B' }, { status: 'accepted', label: '✓', color: '#059669' }, { status: 'rejected', label: '✗', color: '#EF4444' }],
+  reviewing: [{ status: 'accepted',  label: '✓ Retenir', color: '#059669' }, { status: 'rejected', label: '✗ Refuser', color: '#EF4444' }, { status: 'pending', label: '↩', color: '#94A3B8' }],
+  accepted:  [{ status: 'reviewing', label: '↩ Étude',  color: '#94A3B8' }],
   rejected:  [{ status: 'pending',   label: '↩ Attente', color: '#94A3B8' }],
 };
 
-const COL_W = 250;
 const SCREEN_H = Dimensions.get('window').height;
 
-// ─── Composant principal ──────────────────────────────────────────────────────
+// ─── Dashboard ────────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
-  const { signOut } = useAuth();
+  const { signOut, profile } = useAuth();
   const [candidatures, setCandidatures] = useState<any[]>([]);
   const [loading,      setLoading]      = useState(true);
-  const [refreshing,   setRefreshing]   = useState(false);
   const [search,       setSearch]       = useState('');
   const [selectedId,   setSelectedId]   = useState<string | null>(null);
   const [updating,     setUpdating]     = useState(false);
-  const [rtStatus,     setRtStatus]     = useState<'connecting' | 'connected' | 'error'>('connecting');
-  const [lastUpdated,  setLastUpdated]  = useState('');
+  const [rtOk,         setRtOk]         = useState(false);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const [lastRefresh,  setLastRefresh]  = useState('');
 
   useEffect(() => {
     load();
-    const channel = supabase
-      .channel('admin-kanban-rt')
+    const ch = supabase.channel('admin-rt-v2')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'candidatures' }, load)
-      .subscribe(s => setRtStatus(
-        s === 'SUBSCRIBED' ? 'connected' : s === 'CHANNEL_ERROR' ? 'error' : 'connecting'
-      ));
-    return () => { supabase.removeChannel(channel); };
+      .subscribe(s => setRtOk(s === 'SUBSCRIBED'));
+    return () => { supabase.removeChannel(ch); };
   }, []);
 
   async function load() {
     const { data } = await (supabase.from('candidatures') as any)
       .select('*, profiles(*)')
       .order('created_at', { ascending: false });
-    if (data) {
-      setCandidatures(data);
-    }
-    setLastUpdated(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
+    if (data) setCandidatures(data);
+    setLastRefresh(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
     setRefreshing(false);
   }
@@ -95,170 +84,218 @@ export default function AdminDashboard() {
     setUpdating(false);
   }
 
-  // Filtrage
+  // Dérivés
   const q = search.toLowerCase();
-  const filtered = search
+  const filtered = q
     ? candidatures.filter(c =>
         c.business_name?.toLowerCase().includes(q) ||
-        c.siret?.includes(q) ||
         c.contact_email?.toLowerCase().includes(q) ||
-        c.contact_first_name?.toLowerCase().includes(q) ||
-        c.contact_last_name?.toLowerCase().includes(q) ||
         c.product_category?.toLowerCase().includes(q) ||
-        c.profiles?.first_name?.toLowerCase().includes(q) ||
-        c.profiles?.last_name?.toLowerCase().includes(q)
+        c.city?.toLowerCase().includes(q) ||
+        c.siret?.includes(q)
       )
     : candidatures;
 
-  const grouped = Object.fromEntries(
-    COLUMNS.map(col => [col.key, filtered.filter(c => c.status === col.key)])
-  );
-  const counts = Object.fromEntries(
-    COLUMNS.map(col => [col.key, candidatures.filter(c => c.status === col.key).length])
-  );
+  const grouped  = Object.fromEntries(COLUMNS.map(col => [col.key, filtered.filter(c => c.status === col.key)]));
+  const counts   = Object.fromEntries(COLUMNS.map(col => [col.key, candidatures.filter(c => c.status === col.key).length]));
+  const toAction = counts.pending + counts.reviewing;
 
-  // Compteurs de catégories (en attente + en étude uniquement)
+  const acceptRate = candidatures.length
+    ? Math.round((counts.accepted / candidatures.length) * 100)
+    : 0;
+
+  const jours = Math.max(0, Math.ceil((MARKET_DATE.getTime() - Date.now()) / 86_400_000));
+
   const catCounts = useMemo(() => {
     const map: Record<string, number> = {};
-    candidatures
-      .filter(c => c.status === 'pending' || c.status === 'reviewing')
-      .forEach(c => {
-        const cat = c.candidature_type === 'foodtruck'
-          ? 'Restauration / Food Truck'
-          : (c.product_category || 'Autre');
-        map[cat] = (map[cat] ?? 0) + 1;
-      });
+    candidatures.filter(c => c.status === 'pending' || c.status === 'reviewing').forEach(c => {
+      const cat = c.candidature_type === 'foodtruck' ? 'Restauration / Food Truck' : (c.product_category || 'Autre');
+      map[cat] = (map[cat] ?? 0) + 1;
+    });
     return Object.entries(map).sort((a, b) => b[1] - a[1]);
   }, [candidatures]);
 
-  if (loading) {
-    return <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>;
-  }
+  if (loading) return (
+    <View style={styles.splash}>
+      <ActivityIndicator color="#fff" size="large" />
+      <Text style={styles.splashText}>Chargement…</Text>
+    </View>
+  );
 
   return (
     <View style={styles.root}>
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          SIDEBAR — dark navy
+      ══════════════════════════════════════════════════════════════════════ */}
       <View style={styles.sidebar}>
-        <View style={styles.sidebarTop}>
+
+        {/* Logo */}
+        <View style={styles.sideTop}>
           <View style={styles.logoRow}>
-            <AppLogo size={34} />
-            <View style={styles.wordmark}>
-              <Text style={styles.wBold}>Pitch</Text>
-              <Text style={styles.wLight}>Me</Text>
-            </View>
+            <AppLogo size={30} />
+            <Text style={styles.logoText}>Pitch<Text style={styles.logoAccent}>Me</Text></Text>
           </View>
-          <Text style={styles.appSub}>Marché de Noël · Bourg-sur-Gironde</Text>
+          <Text style={styles.logoSub}>Marché de Noël · Bourg</Text>
         </View>
 
-        {/* Statuts */}
-        <Text style={styles.sideLabel}>STATUTS</Text>
-        <SbItem dot="#64748B" label="Toutes"     count={candidatures.length} />
-        <SbItem dot="#D97706" label="En attente" count={counts.pending}   urgent={counts.pending > 0} />
-        <SbItem dot="#2563EB" label="En étude"   count={counts.reviewing} />
-        <SbItem dot="#059669" label="Retenues"   count={counts.accepted} />
-        <SbItem dot="#6B7280" label="Refusées"   count={counts.rejected} />
+        {/* Countdown */}
+        <View style={styles.countdown}>
+          <Text style={styles.countdownNum}>J-{jours}</Text>
+          <Text style={styles.countdownLabel}>🎄 {MARKET_DATE.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })}</Text>
+        </View>
 
-        {/* Catégories à traiter */}
+        {/* Nav statuts */}
+        <Text style={styles.navSection}>DOSSIERS</Text>
+        {[
+          { label: 'Tous',         count: candidatures.length, color: '#64748B' },
+          { label: 'À traiter',    count: toAction,            color: '#F59E0B', urgent: toAction > 0 },
+          { label: 'En attente',   count: counts.pending,      color: '#F59E0B' },
+          { label: 'En étude',     count: counts.reviewing,    color: '#2563EB' },
+          { label: 'Retenus',      count: counts.accepted,     color: '#059669' },
+          { label: 'Non retenus',  count: counts.rejected,     color: '#6B7280' },
+        ].map(({ label, count, color, urgent }) => (
+          <View key={label} style={styles.navItem}>
+            <View style={[styles.navDot, { backgroundColor: color }]} />
+            <Text style={[styles.navLabel, urgent && styles.navLabelUrgent]}>{label}</Text>
+            <View style={[styles.navPill, { backgroundColor: color + (urgent ? 'CC' : '33') }]}>
+              <Text style={[styles.navPillText, { color: urgent ? '#fff' : color }]}>{count}</Text>
+            </View>
+          </View>
+        ))}
+
+        {/* Catégories actives */}
         {catCounts.length > 0 && (
           <>
-            <Text style={[styles.sideLabel, { marginTop: 20 }]}>CATÉGORIES À TRAITER</Text>
+            <Text style={[styles.navSection, { marginTop: 20 }]}>CATÉGORIES ACTIVES</Text>
             {catCounts.map(([cat, n]) => (
-              <View key={cat} style={styles.catItem}>
-                <Text style={styles.catItemIcon}>{catIcon(cat)}</Text>
-                <Text style={styles.catItemLabel} numberOfLines={1}>{cat}</Text>
-                <Text style={styles.catItemCount}>{n}</Text>
+              <View key={cat} style={styles.catRow}>
+                <Text style={styles.catEmoji}>{catIcon(cat)}</Text>
+                <Text style={styles.catName} numberOfLines={1}>{cat.split(' / ')[0]}</Text>
+                <Text style={styles.catCount}>{n}</Text>
               </View>
             ))}
           </>
         )}
 
-        {/* Outils */}
-        <Text style={[styles.sideLabel, { marginTop: 20 }]}>OUTILS</Text>
-        <TouchableOpacity style={styles.sideBtn} onPress={() => router.push('/(admin)/qrcode')}>
-          <Text style={styles.sideBtnText}>📱 QR Code</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.sideBtn} onPress={() => router.push('/(admin)/modules')}>
-          <Text style={styles.sideBtnText}>⚙️ Modules</Text>
-        </TouchableOpacity>
-
         <View style={{ flex: 1 }} />
 
-        {/* Realtime */}
-        <View style={styles.rtBar}>
-          <View style={[styles.rtDot, {
-            backgroundColor: rtStatus === 'connected' ? '#10B981' : rtStatus === 'error' ? '#EF4444' : '#F59E0B',
-          }]} />
-          <Text style={styles.rtText}>
-            {rtStatus === 'connected' ? 'Temps réel' : rtStatus === 'error' ? 'Hors ligne' : 'Connexion…'}
-          </Text>
-          <TouchableOpacity onPress={() => { setRefreshing(true); load(); }} disabled={refreshing}>
-            <Text style={[styles.rtRefresh, refreshing && { opacity: 0.3 }]}>↻</Text>
+        {/* Outils */}
+        <View style={styles.sideTools}>
+          <TouchableOpacity style={styles.toolBtn} onPress={() => router.push('/(admin)/qrcode')}>
+            <Text style={styles.toolBtnText}>📱  QR Code</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.toolBtn} onPress={() => router.push('/(admin)/modules')}>
+            <Text style={styles.toolBtnText}>⚙️  Modules</Text>
           </TouchableOpacity>
         </View>
-        {lastUpdated ? <Text style={styles.rtLast}>Mis à jour à {lastUpdated}</Text> : null}
-        <TouchableOpacity style={styles.signOutBtn} onPress={signOut}>
-          <Text style={styles.signOutText}>⏏  Déconnexion</Text>
-        </TouchableOpacity>
+
+        {/* Footer sidebar */}
+        <View style={styles.sideFooter}>
+          <View style={styles.rtRow}>
+            <View style={[styles.rtDot, { backgroundColor: rtOk ? '#34D399' : '#F59E0B' }]} />
+            <Text style={styles.rtText}>{rtOk ? 'Temps réel actif' : 'Connexion…'}</Text>
+            <TouchableOpacity onPress={() => { setRefreshing(true); load(); }} disabled={refreshing}>
+              <Text style={[styles.rtRefresh, refreshing && { opacity: 0.3 }]}>↻</Text>
+            </TouchableOpacity>
+          </View>
+          {lastRefresh ? <Text style={styles.rtLast}>Màj {lastRefresh}</Text> : null}
+          <TouchableOpacity style={styles.signOut} onPress={signOut}>
+            <Text style={styles.signOutText}>
+              {profile?.first_name ? `⏏  ${profile.first_name}` : '⏏  Déconnexion'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* ── Kanban board ────────────────────────────────────────────────────── */}
-      <View style={styles.board}>
-        <TextInput
-          style={styles.search}
-          value={search}
-          onChangeText={setSearch}
-          placeholder="🔍  Rechercher un exposant, catégorie, email..."
-          placeholderTextColor={Colors.textMuted}
-        />
+      {/* ══════════════════════════════════════════════════════════════════════
+          MAIN
+      ══════════════════════════════════════════════════════════════════════ */}
+      <View style={styles.main}>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.kanban} contentContainerStyle={styles.kanbanContent}>
-          {COLUMNS.map((col) => {
+        {/* ── KPI strip ───────────────────────────────────────────────────── */}
+        <View style={styles.kpiStrip}>
+          <KpiCard value={candidatures.length} label="Candidatures" color="#6366F1" icon="📋" />
+          <KpiCard value={toAction}            label="À traiter"    color="#F59E0B" icon="⚡" urgent={toAction > 0} />
+          <KpiCard value={counts.accepted}     label="Retenus"      color="#059669" icon="✅" />
+          <KpiCard value={`${acceptRate}%`}    label="Taux retenu"  color="#2563EB" icon="📊" />
+        </View>
+
+        {/* ── Search bar ──────────────────────────────────────────────────── */}
+        <View style={styles.searchWrap}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.searchInput}
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Rechercher par nom, catégorie, ville, email, SIRET…"
+            placeholderTextColor="#94A3B8"
+          />
+          {search ? (
+            <TouchableOpacity onPress={() => setSearch('')} style={styles.searchClear}>
+              <Text style={styles.searchClearText}>✕</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {/* ── Kanban ──────────────────────────────────────────────────────── */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.kanban}
+          contentContainerStyle={styles.kanbanContent}
+        >
+          {COLUMNS.map(col => {
             const items: any[] = grouped[col.key] ?? [];
             return (
-              <View key={col.key} style={[styles.column, { backgroundColor: col.colBg }]}>
+              <View key={col.key} style={styles.col}>
 
                 {/* En-tête colonne */}
-                <View style={[styles.colHeader, { backgroundColor: col.headerBg }]}>
-                  <View style={[styles.colDot, { backgroundColor: col.color }]} />
-                  <Text style={[styles.colTitle, { color: col.color }]}>{col.label}</Text>
-                  <View style={[styles.colBadge, { backgroundColor: col.color }]}>
-                    <Text style={styles.colBadgeText}>{items.length}</Text>
+                <View style={[styles.colHead, { borderTopColor: col.color }]}>
+                  <View style={styles.colHeadLeft}>
+                    <View style={[styles.colDot, { backgroundColor: col.color }]} />
+                    <Text style={[styles.colLabel, { color: col.color }]}>{col.label}</Text>
+                  </View>
+                  <View style={[styles.colCount, { backgroundColor: col.dot }]}>
+                    <Text style={[styles.colCountText, { color: col.color }]}>{items.length}</Text>
                   </View>
                 </View>
 
                 {/* Cartes */}
                 <ScrollView
-                  style={styles.colScroll}
+                  style={[styles.colScroll, { backgroundColor: col.light }]}
                   contentContainerStyle={styles.colContent}
                   showsVerticalScrollIndicator={false}
                 >
                   {items.length === 0 && (
-                    <Text style={styles.colEmpty}>Aucune candidature</Text>
+                    <View style={styles.colEmpty}>
+                      <Text style={styles.colEmptyText}>Aucun dossier</Text>
+                    </View>
                   )}
                   {items.map((item, idx) => (
-                    <KanbanCard
+                    <KCard
                       key={item.id}
                       item={item}
                       col={col}
-                      index={idx}
-                      isSelected={selectedId === item.id}
-                      onPress={(i) => setSelectedId(i.id)}
+                      idx={idx}
+                      selected={selectedId === item.id}
+                      onPress={() => setSelectedId(item.id === selectedId ? null : item.id)}
                       onAction={updateStatus}
                       disabled={updating}
                     />
                   ))}
                 </ScrollView>
-
               </View>
             );
           })}
         </ScrollView>
       </View>
 
-      {/* ── Panneau détail (fiche complète inline) ──────────────────────── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          PANNEAU DÉTAIL (slide-in)
+      ══════════════════════════════════════════════════════════════════════ */}
       {selectedId && (
-        <View style={styles.detail}>
+        <View style={styles.panel}>
           <CandidatureDetailPanel
             candidatureId={selectedId}
             onClose={() => setSelectedId(null)}
@@ -270,50 +307,80 @@ export default function AdminDashboard() {
   );
 }
 
+// ─── Carte KPI ────────────────────────────────────────────────────────────────
+function KpiCard({ value, label, color, icon, urgent }: {
+  value: number | string; label: string; color: string; icon: string; urgent?: boolean;
+}) {
+  return (
+    <View style={[styles.kpiCard, urgent && { borderColor: color, borderWidth: 1.5 }]}>
+      <View style={styles.kpiTop}>
+        <Text style={styles.kpiIcon}>{icon}</Text>
+        {urgent && (
+          <View style={[styles.kpiUrgentDot, { backgroundColor: color }]} />
+        )}
+      </View>
+      <Text style={[styles.kpiValue, { color }]}>{value}</Text>
+      <Text style={styles.kpiLabel}>{label}</Text>
+    </View>
+  );
+}
+
 // ─── Carte kanban ─────────────────────────────────────────────────────────────
-function KanbanCard({ item, col, index, isSelected, onPress, onAction, disabled }: {
-  item: any; col: (typeof COLUMNS)[number]; index: number;
-  isSelected: boolean; onPress: (i: any) => void;
+function KCard({ item, col, idx, selected, onPress, onAction, disabled }: {
+  item: any; col: (typeof COLUMNS)[number]; idx: number;
+  selected: boolean; onPress: () => void;
   onAction: (id: string, s: string) => void; disabled: boolean;
 }) {
-  const icon = item.candidature_type === 'foodtruck' ? '🚚' : catIcon(item.product_category);
-  const actions = NEXT[item.status] ?? [];
-  const contact = item.contact_first_name ?? item.profiles?.first_name;
+  const icon    = item.candidature_type === 'foodtruck' ? '🚚' : catIcon(item.product_category);
+  const actions = QUICK_ACTIONS[item.status] ?? [];
+  const contact = [item.contact_first_name, item.contact_last_name].filter(Boolean).join(' ')
+                  || item.profiles?.first_name;
 
   return (
     <TouchableOpacity
-      style={[styles.card, isSelected && { borderColor: col.color, borderWidth: 2 }]}
-      onPress={() => onPress(item)}
-      activeOpacity={0.88}
+      style={[
+        styles.card,
+        { borderLeftColor: col.color },
+        selected && { backgroundColor: col.color + '08', borderColor: col.color, borderLeftWidth: 4 },
+      ]}
+      onPress={onPress}
+      activeOpacity={0.85}
     >
-      <View style={styles.cardTop}>
-        <View style={styles.cardTopLeft}>
-          <Text style={styles.cardCatIcon}>{icon}</Text>
+      {/* Ligne 1 : icône + badges */}
+      <View style={styles.cardRow}>
+        <Text style={styles.cardIcon}>{icon}</Text>
+        <View style={styles.cardBadges}>
           {'numbered' in col && col.numbered && (
             <View style={[styles.numBadge, { backgroundColor: col.color }]}>
-              <Text style={styles.numText}>{index + 1}</Text>
+              <Text style={styles.numText}>#{idx + 1}</Text>
             </View>
           )}
-        </View>
-        <View style={styles.cardTopRight}>
           {item.candidature_type === 'foodtruck' && (
-            <View style={styles.typeBadge}>
-              <Text style={styles.typeBadgeText}>Food Truck</Text>
+            <View style={styles.ftBadge}>
+              <Text style={styles.ftBadgeText}>FOOD TRUCK</Text>
             </View>
           )}
-          {item.admin_notes && <Text style={styles.notesDot}>📝</Text>}
+          {item.admin_notes ? <Text style={styles.notesMark}>📝</Text> : null}
         </View>
       </View>
 
+      {/* Nom commerce */}
       <Text style={styles.cardName} numberOfLines={2}>{item.business_name}</Text>
-      <Text style={styles.cardCat} numberOfLines={1}>{item.product_category ?? '—'}</Text>
 
-      {contact && (
-        <Text style={styles.cardContact} numberOfLines={1}>👤 {contact}</Text>
+      {/* Catégorie */}
+      {item.product_category && (
+        <Text style={styles.cardCat} numberOfLines={1}>{item.product_category}</Text>
       )}
 
+      {/* Contact + ville */}
+      <View style={styles.cardMeta}>
+        {contact ? <Text style={styles.cardMetaText} numberOfLines={1}>👤 {contact}</Text> : null}
+        {item.city ? <Text style={styles.cardMetaText} numberOfLines={1}>📍 {item.city}</Text> : null}
+      </View>
+
+      {/* Date */}
       <Text style={styles.cardDate}>
-        {new Date(item.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: '2-digit' })}
+        {new Date(item.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}
       </Text>
 
       {/* Actions */}
@@ -322,11 +389,11 @@ function KanbanCard({ item, col, index, isSelected, onPress, onAction, disabled 
           {actions.map(a => (
             <TouchableOpacity
               key={a.status}
-              style={[styles.chip, { backgroundColor: a.color + '18', borderColor: a.color + '60' }]}
+              style={[styles.actionChip, { backgroundColor: a.color + '15', borderColor: a.color + '50' }]}
               onPress={e => { (e as any).stopPropagation?.(); onAction(item.id, a.status); }}
               disabled={disabled}
             >
-              <Text style={[styles.chipText, { color: a.color }]}>{a.label}</Text>
+              <Text style={[styles.actionChipText, { color: a.color }]}>{a.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -335,89 +402,163 @@ function KanbanCard({ item, col, index, isSelected, onPress, onAction, disabled 
   );
 }
 
-// ─── Helpers sidebar ──────────────────────────────────────────────────────────
-function SbItem({ dot, label, count, urgent }: { dot: string; label: string; count: number; urgent?: boolean }) {
-  return (
-    <View style={styles.sbItem}>
-      <View style={[styles.sbDot, { backgroundColor: dot }]} />
-      <Text style={[styles.sbLabel, urgent && { fontWeight: '700', color: Colors.text }]}>{label}</Text>
-      <Text style={[styles.sbCount, { color: dot }]}>{count}</Text>
-    </View>
-  );
-}
-
 // ─── Styles ───────────────────────────────────────────────────────────────────
+const SIDEBAR_W = 220;
+const PANEL_W   = 460;
+const COL_W     = 255;
+
 const styles = StyleSheet.create({
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
-  root:     { flex: 1, flexDirection: 'row', backgroundColor: '#F1F5F9' },
+  // ── Loading
+  splash:     { flex: 1, backgroundColor: '#0F172A', justifyContent: 'center', alignItems: 'center', gap: 16 },
+  splashText: { color: '#94A3B8', fontSize: 14 },
 
-  // ── Sidebar
-  sidebar:    { width: 210, backgroundColor: '#fff', borderRightWidth: 1, borderRightColor: '#E2E8F0', paddingVertical: 20, paddingHorizontal: 14, flexDirection: 'column' },
-  sidebarTop: { marginBottom: 22 },
+  // ── Layout racine
+  root: { flex: 1, flexDirection: 'row', backgroundColor: '#F1F5F9' },
+
+  // ══════════════════ SIDEBAR ══════════════════
+  sidebar: {
+    width: SIDEBAR_W,
+    backgroundColor: '#0F172A',
+    paddingVertical: 20,
+    paddingHorizontal: 14,
+    flexDirection: 'column',
+  },
+  sideTop:    { marginBottom: 20 },
   logoRow:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  wordmark:   { flexDirection: 'row', alignItems: 'baseline' },
-  wBold:      { fontSize: 18, fontWeight: '800', color: '#1A202C' },
-  wLight:     { fontSize: 18, fontWeight: '300', color: Colors.primary },
-  appSub:     { fontSize: 10, color: Colors.textMuted },
-  sideLabel:  { fontSize: 9, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1, marginBottom: 8, marginTop: 4 },
+  logoText:   { fontSize: 18, fontWeight: '800', color: '#F8FAFC' },
+  logoAccent: { color: '#2563EB' },
+  logoSub:    { fontSize: 10, color: '#475569' },
 
-  sbItem:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
-  sbDot:      { width: 7, height: 7, borderRadius: 4, marginRight: 8 },
-  sbLabel:    { flex: 1, fontSize: 12, color: Colors.textSecondary },
-  sbCount:    { fontSize: 12, fontWeight: '700' },
+  countdown: {
+    backgroundColor: '#1E293B',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 22,
+    alignItems: 'center',
+  },
+  countdownNum:   { fontSize: 26, fontWeight: '900', color: '#F8FAFC', letterSpacing: -1 },
+  countdownLabel: { fontSize: 10, color: '#64748B', marginTop: 2 },
 
-  catItem:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 6 },
-  catItemIcon: { fontSize: 14, width: 20, textAlign: 'center' },
-  catItemLabel: { flex: 1, fontSize: 11, color: Colors.textSecondary },
-  catItemCount: { fontSize: 11, fontWeight: '700', color: Colors.primary, backgroundColor: Colors.primary + '15', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 },
+  navSection: { fontSize: 9, fontWeight: '700', color: '#334155', letterSpacing: 1.2, marginBottom: 8, marginTop: 2 },
+  navItem:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 5, gap: 8 },
+  navDot:     { width: 6, height: 6, borderRadius: 3 },
+  navLabel:   { flex: 1, fontSize: 12, color: '#94A3B8' },
+  navLabelUrgent: { color: '#F8FAFC', fontWeight: '700' },
+  navPill:    { borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  navPillText: { fontSize: 11, fontWeight: '700' },
 
-  sideBtn:     { backgroundColor: Colors.surface, borderRadius: 7, padding: 9, borderWidth: 1, borderColor: Colors.border, marginBottom: 5 },
-  sideBtnText: { fontSize: 11, color: Colors.text },
+  catRow:  { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 7 },
+  catEmoji: { fontSize: 13, width: 18, textAlign: 'center' },
+  catName: { flex: 1, fontSize: 11, color: '#64748B' },
+  catCount: { fontSize: 11, fontWeight: '700', color: '#94A3B8' },
 
-  rtBar:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border },
-  rtDot:     { width: 7, height: 7, borderRadius: 4 },
-  rtText:    { flex: 1, fontSize: 10, color: Colors.textSecondary },
-  rtRefresh: { fontSize: 15, color: Colors.primary, fontWeight: 'bold', paddingHorizontal: 4 },
-  rtLast:    { fontSize: 9, color: Colors.textMuted, marginBottom: 6 },
-  signOutBtn:  { paddingVertical: 9, borderTopWidth: 1, borderTopColor: Colors.border },
-  signOutText: { fontSize: 12, color: Colors.textSecondary },
+  sideTools: { gap: 6, marginBottom: 12 },
+  toolBtn:   { backgroundColor: '#1E293B', borderRadius: 8, padding: 9 },
+  toolBtnText: { fontSize: 11, color: '#94A3B8' },
 
-  // ── Board
-  board:         { flex: 1, flexDirection: 'column', padding: 14 },
-  search:        { backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 10, fontSize: 13, color: Colors.text, marginBottom: 14 },
+  sideFooter: { borderTopWidth: 1, borderTopColor: '#1E293B', paddingTop: 12, gap: 4 },
+  rtRow:      { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rtDot:      { width: 6, height: 6, borderRadius: 3 },
+  rtText:     { flex: 1, fontSize: 10, color: '#475569' },
+  rtRefresh:  { fontSize: 14, color: '#2563EB', fontWeight: 'bold', paddingHorizontal: 4 },
+  rtLast:     { fontSize: 9, color: '#334155' },
+  signOut:    { paddingVertical: 8 },
+  signOutText: { fontSize: 12, color: '#475569' },
+
+  // ══════════════════ MAIN ══════════════════
+  main: { flex: 1, flexDirection: 'column' },
+
+  // KPI
+  kpiStrip: {
+    flexDirection: 'row',
+    gap: 12,
+    padding: 16,
+    paddingBottom: 0,
+  },
+  kpiCard:    {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  kpiTop:       { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  kpiIcon:      { fontSize: 18 },
+  kpiUrgentDot: { width: 8, height: 8, borderRadius: 4 },
+  kpiValue:     { fontSize: 26, fontWeight: '900', letterSpacing: -1 },
+  kpiLabel:     { fontSize: 11, color: '#94A3B8', marginTop: 2, fontWeight: '500' },
+
+  // Search
+  searchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginHorizontal: 16,
+    marginVertical: 12,
+    paddingHorizontal: 12,
+  },
+  searchIcon:      { fontSize: 14, marginRight: 8, color: '#94A3B8' },
+  searchInput:     { flex: 1, height: 40, color: '#1E293B', fontSize: 13 },
+  searchClear:     { padding: 4 },
+  searchClearText: { color: '#94A3B8', fontSize: 14 },
+
+  // Kanban
   kanban:        { flex: 1 },
-  kanbanContent: { flexDirection: 'row', gap: 10, paddingBottom: 20, alignItems: 'flex-start' },
+  kanbanContent: { flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingBottom: 20, alignItems: 'flex-start' },
 
-  // ── Colonne
-  column:    { width: COL_W, borderRadius: 12, overflow: 'hidden' },
-  colHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 7 },
-  colDot:    { width: 9, height: 9, borderRadius: 5 },
-  colTitle:  { flex: 1, fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
-  colBadge:  { borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
-  colBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  colScroll: { maxHeight: SCREEN_H - 160 },
-  colContent: { padding: 8, gap: 8 },
-  colEmpty:  { textAlign: 'center', color: Colors.textMuted, fontSize: 12, paddingVertical: 32 },
+  // Colonne
+  col:      { width: COL_W, borderRadius: 14, overflow: 'hidden', backgroundColor: '#fff', borderWidth: 1, borderColor: '#E2E8F0' },
+  colHead:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, backgroundColor: '#fff', borderTopWidth: 3 },
+  colHeadLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  colDot:   { width: 8, height: 8, borderRadius: 4 },
+  colLabel: { fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
+  colCount: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  colCountText: { fontSize: 12, fontWeight: '800' },
+  colScroll:   { maxHeight: SCREEN_H - 230 },
+  colContent:  { padding: 10, gap: 8 },
+  colEmpty:    { alignItems: 'center', paddingVertical: 36 },
+  colEmptyText: { fontSize: 12, color: '#CBD5E1' },
 
-  // ── Carte
-  card:       { backgroundColor: '#fff', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E2E8F0' },
-  cardTop:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
-  cardTopLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cardTopRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  cardCatIcon: { fontSize: 22 },
-  numBadge:   { width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
-  numText:    { color: '#fff', fontSize: 10, fontWeight: '800' },
-  typeBadge:  { backgroundColor: '#DBEAFE', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
-  typeBadgeText: { color: '#2563EB', fontSize: 9, fontWeight: '700' },
-  notesDot:   { fontSize: 12 },
-  cardName:   { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 3 },
-  cardCat:    { fontSize: 11, color: Colors.textSecondary, marginBottom: 4 },
-  cardContact: { fontSize: 11, color: Colors.textMuted, marginBottom: 3 },
-  cardDate:   { fontSize: 10, color: Colors.textMuted, marginBottom: 8 },
+  // Carte
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderLeftWidth: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  cardRow:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  cardIcon:    { fontSize: 24 },
+  cardBadges:  { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  numBadge:    { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  numText:     { color: '#fff', fontSize: 10, fontWeight: '800' },
+  ftBadge:     { backgroundColor: '#DBEAFE', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 2 },
+  ftBadgeText: { color: '#1D4ED8', fontSize: 8, fontWeight: '800', letterSpacing: 0.5 },
+  notesMark:   { fontSize: 13 },
+  cardName:    { fontSize: 14, fontWeight: '700', color: '#0F172A', lineHeight: 20, marginBottom: 3 },
+  cardCat:     { fontSize: 11, color: '#64748B', marginBottom: 7 },
+  cardMeta:    { gap: 2, marginBottom: 7 },
+  cardMetaText: { fontSize: 11, color: '#94A3B8' },
+  cardDate:    { fontSize: 10, color: '#CBD5E1', marginBottom: 10 },
   cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
-  chip:       { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
-  chipText:   { fontSize: 11, fontWeight: '600' },
+  actionChip:  { borderRadius: 6, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 4 },
+  actionChipText: { fontSize: 11, fontWeight: '600' },
 
-  // ── Panneau détail
-  detail: { width: 460, borderLeftWidth: 1, borderLeftColor: Colors.border },
+  // ══════════════════ PANEL ══════════════════
+  panel: {
+    width: PANEL_W,
+    borderLeftWidth: 1,
+    borderLeftColor: '#E2E8F0',
+    backgroundColor: '#fff',
+  },
 });
