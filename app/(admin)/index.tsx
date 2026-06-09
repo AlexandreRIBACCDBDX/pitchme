@@ -1,83 +1,91 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, ActivityIndicator,
+  TextInput, ActivityIndicator, Dimensions,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
-import { Colors, StatusColors, StatusLabels } from '@/constants/theme';
+import { Colors, StatusColors } from '@/constants/theme';
 import AppLogo from '@/components/AppLogo';
 
-const SECTIONS = [
-  { key: 'pending',   title: 'EN ATTENTE DE VALIDATION', border: '#EF4444', actions: ['reviewing', 'rejected'] },
-  { key: 'reviewing', title: "EN COURS D'ÉTUDE",          border: '#F59E0B', actions: ['accepted', 'rejected'], rollback: 'pending' },
-  { key: 'accepted',  title: 'RETENUS',                   border: '#10B981', numbered: true, rollback: 'reviewing' },
-  { key: 'rejected',  title: 'REFUSÉS',                   border: '#9CA3AF', rollback: 'pending' },
-];
+// ─── Catégorie → icône ────────────────────────────────────────────────────────
+const CAT_ICON: Record<string, string> = {
+  'Artisanat / Déco':          '🎨',
+  'Alimentation / Épicerie fine': '🧺',
+  'Bijoux / Accessoires':      '💍',
+  'Jouets / Enfants':          '🧸',
+  'Textile / Vêtements':       '👗',
+  'Cosmétiques / Bien-être':   '🧴',
+  'Livres / Art':              '📚',
+  'Plants / Fleurs':           '🌸',
+  'Boissons':                  '🍷',
+  'Restauration / Food Truck': '🚚',
+  'Autre':                     '🏪',
+};
+function catIcon(category?: string | null): string {
+  if (!category) return '🏪';
+  if (category.toLowerCase().includes('food') || category.toLowerCase().includes('truck')) return '🚚';
+  return CAT_ICON[category] ?? '🏪';
+}
 
-const STATUS_BG: Record<string, string> = {
-  pending: '#FEF2F2', reviewing: '#FFFBEB', accepted: '#ECFDF5', rejected: '#F9FAFB',
+// ─── Colonnes kanban ──────────────────────────────────────────────────────────
+const COLUMNS = [
+  { key: 'pending',   label: 'En attente', color: '#D97706', headerBg: '#FEF3C7', colBg: '#FFFBEB' },
+  { key: 'reviewing', label: 'En étude',   color: '#2563EB', headerBg: '#DBEAFE', colBg: '#EFF6FF' },
+  { key: 'accepted',  label: 'Retenus',    color: '#059669', headerBg: '#D1FAE5', colBg: '#F0FDF4', numbered: true },
+  { key: 'rejected',  label: 'Refusés',    color: '#6B7280', headerBg: '#F3F4F6', colBg: '#F9FAFB' },
+] as const;
+
+// Actions disponibles par statut actuel
+const NEXT: Record<string, { status: string; label: string; color: string }[]> = {
+  pending:   [{ status: 'reviewing', label: '→ Étude',   color: '#F59E0B' },
+              { status: 'accepted',  label: '✓',          color: '#10B981' },
+              { status: 'rejected',  label: '✗',          color: '#EF4444' }],
+  reviewing: [{ status: 'accepted',  label: '✓ Retenir', color: '#10B981' },
+              { status: 'rejected',  label: '✗ Refuser', color: '#EF4444' },
+              { status: 'pending',   label: '↩',          color: '#94A3B8' }],
+  accepted:  [{ status: 'reviewing', label: '↩ Étude',   color: '#94A3B8' }],
+  rejected:  [{ status: 'pending',   label: '↩ Attente', color: '#94A3B8' }],
 };
 
-const ACTION_LABEL: Record<string, string> = {
-  reviewing: '→ Étude', accepted: '✓ Retenir', rejected: '✗ Refuser',
-};
-const ACTION_COLOR: Record<string, string> = {
-  reviewing: '#F59E0B', accepted: '#10B981', rejected: '#EF4444',
-};
+const COL_W = 250;
+const SCREEN_H = Dimensions.get('window').height;
 
-const ROLLBACK_LABEL: Record<string, string> = {
-  pending: '↩ Attente', reviewing: '↩ Étude',
-};
-const ROLLBACK_COLOR = '#94A3B8';
-
+// ─── Composant principal ──────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const { signOut } = useAuth();
   const [candidatures, setCandidatures] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [search, setSearch] = useState('');
-  const [selected, setSelected] = useState<any>(null);
-  const [updating, setUpdating] = useState(false);
-  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
-  const [lastUpdated, setLastUpdated] = useState('');
+  const [loading,      setLoading]      = useState(true);
+  const [refreshing,   setRefreshing]   = useState(false);
+  const [search,       setSearch]       = useState('');
+  const [selected,     setSelected]     = useState<any>(null);
+  const [updating,     setUpdating]     = useState(false);
+  const [rtStatus,     setRtStatus]     = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [lastUpdated,  setLastUpdated]  = useState('');
 
   useEffect(() => {
     load();
-
     const channel = supabase
-      .channel('admin-candidatures-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'candidatures' }, () => {
-        load();
-      })
-      .subscribe((status) => {
-        setRealtimeStatus(
-          status === 'SUBSCRIBED'    ? 'connected'  :
-          status === 'CHANNEL_ERROR' ? 'error'       : 'connecting'
-        );
-      });
-
+      .channel('admin-kanban-rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'candidatures' }, load)
+      .subscribe(s => setRtStatus(
+        s === 'SUBSCRIBED' ? 'connected' : s === 'CHANNEL_ERROR' ? 'error' : 'connecting'
+      ));
     return () => { supabase.removeChannel(channel); };
   }, []);
 
   async function load() {
-    const { data } = await supabase
-      .from('candidatures')
+    const { data } = await (supabase.from('candidatures') as any)
       .select('*, profiles(*)')
       .order('created_at', { ascending: false });
     if (data) {
       setCandidatures(data);
-      setSelected((s: any) => s ? ((data as any[]).find((c: any) => c.id === s.id) ?? null) : null);
+      setSelected((s: any) => s ? (data.find((c: any) => c.id === s.id) ?? null) : null);
     }
     setLastUpdated(new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }));
     setLoading(false);
     setRefreshing(false);
-  }
-
-  async function manualRefresh() {
-    setRefreshing(true);
-    await load();
   }
 
   async function updateStatus(id: string, status: string) {
@@ -87,23 +95,41 @@ export default function AdminDashboard() {
     setUpdating(false);
   }
 
+  // Filtrage
   const q = search.toLowerCase();
   const filtered = search
     ? candidatures.filter(c =>
         c.business_name?.toLowerCase().includes(q) ||
         c.siret?.includes(q) ||
+        c.contact_email?.toLowerCase().includes(q) ||
+        c.contact_first_name?.toLowerCase().includes(q) ||
+        c.contact_last_name?.toLowerCase().includes(q) ||
+        c.product_category?.toLowerCase().includes(q) ||
         c.profiles?.first_name?.toLowerCase().includes(q) ||
         c.profiles?.last_name?.toLowerCase().includes(q)
       )
     : candidatures;
 
   const grouped = Object.fromEntries(
-    SECTIONS.map(s => [s.key, filtered.filter(c => c.status === s.key)])
+    COLUMNS.map(col => [col.key, filtered.filter(c => c.status === col.key)])
+  );
+  const counts = Object.fromEntries(
+    COLUMNS.map(col => [col.key, candidatures.filter(c => c.status === col.key).length])
   );
 
-  const counts = Object.fromEntries(
-    SECTIONS.map(s => [s.key, candidatures.filter(c => c.status === s.key).length])
-  );
+  // Compteurs de catégories (en attente + en étude uniquement)
+  const catCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    candidatures
+      .filter(c => c.status === 'pending' || c.status === 'reviewing')
+      .forEach(c => {
+        const cat = c.candidature_type === 'foodtruck'
+          ? 'Restauration / Food Truck'
+          : (c.product_category || 'Autre');
+        map[cat] = (map[cat] ?? 0) + 1;
+      });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [candidatures]);
 
   if (loading) {
     return <View style={styles.centered}><ActivityIndicator size="large" color={Colors.primary} /></View>;
@@ -112,144 +138,125 @@ export default function AdminDashboard() {
   return (
     <View style={styles.root}>
 
-      {/* ── Sidebar ── */}
+      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
       <View style={styles.sidebar}>
         <View style={styles.sidebarTop}>
           <View style={styles.logoRow}>
-            <AppLogo size={36} />
-            <View style={styles.sidebarWordmark}>
-              <Text style={styles.appTitleBold}>Pitch</Text>
-              <Text style={styles.appTitleLight}>Me</Text>
+            <AppLogo size={34} />
+            <View style={styles.wordmark}>
+              <Text style={styles.wBold}>Pitch</Text>
+              <Text style={styles.wLight}>Me</Text>
             </View>
           </View>
           <Text style={styles.appSub}>Marché de Noël · Bourg-sur-Gironde</Text>
         </View>
 
-        <Text style={styles.sidebarLabel}>STATUTS</Text>
-        <SidebarItem dot="#64748B" label="Toutes" count={candidatures.length} />
-        <SidebarItem dot="#EF4444" label="En attente" count={counts.pending} />
-        <SidebarItem dot="#F59E0B" label="En étude"   count={counts.reviewing} />
-        <SidebarItem dot="#10B981" label="Retenues"   count={counts.accepted} />
-        <SidebarItem dot="#9CA3AF" label="Refusées"   count={counts.rejected} />
+        {/* Statuts */}
+        <Text style={styles.sideLabel}>STATUTS</Text>
+        <SbItem dot="#64748B" label="Toutes"     count={candidatures.length} />
+        <SbItem dot="#D97706" label="En attente" count={counts.pending}   urgent={counts.pending > 0} />
+        <SbItem dot="#2563EB" label="En étude"   count={counts.reviewing} />
+        <SbItem dot="#059669" label="Retenues"   count={counts.accepted} />
+        <SbItem dot="#6B7280" label="Refusées"   count={counts.rejected} />
 
-        <Text style={[styles.sidebarLabel, { marginTop: 24 }]}>OUTILS</Text>
-        <TouchableOpacity style={styles.sidebarBtn} onPress={() => router.push('/(admin)/qrcode')}>
-          <Text style={styles.sidebarBtnText}>📱 QR Code candidature</Text>
+        {/* Catégories à traiter */}
+        {catCounts.length > 0 && (
+          <>
+            <Text style={[styles.sideLabel, { marginTop: 20 }]}>CATÉGORIES À TRAITER</Text>
+            {catCounts.map(([cat, n]) => (
+              <View key={cat} style={styles.catItem}>
+                <Text style={styles.catItemIcon}>{catIcon(cat)}</Text>
+                <Text style={styles.catItemLabel} numberOfLines={1}>{cat}</Text>
+                <Text style={styles.catItemCount}>{n}</Text>
+              </View>
+            ))}
+          </>
+        )}
+
+        {/* Outils */}
+        <Text style={[styles.sideLabel, { marginTop: 20 }]}>OUTILS</Text>
+        <TouchableOpacity style={styles.sideBtn} onPress={() => router.push('/(admin)/qrcode')}>
+          <Text style={styles.sideBtnText}>📱 QR Code</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.sidebarBtn} onPress={() => router.push('/(admin)/modules')}>
-          <Text style={styles.sidebarBtnText}>⚙️ Modules</Text>
+        <TouchableOpacity style={styles.sideBtn} onPress={() => router.push('/(admin)/modules')}>
+          <Text style={styles.sideBtnText}>⚙️ Modules</Text>
         </TouchableOpacity>
 
         <View style={{ flex: 1 }} />
 
-        {/* ── Realtime status + manual refresh ── */}
-        <View style={styles.realtimeBar}>
-          <View style={[styles.realtimeDot, {
-            backgroundColor:
-              realtimeStatus === 'connected'  ? '#10B981' :
-              realtimeStatus === 'error'      ? '#EF4444' : '#F59E0B',
+        {/* Realtime */}
+        <View style={styles.rtBar}>
+          <View style={[styles.rtDot, {
+            backgroundColor: rtStatus === 'connected' ? '#10B981' : rtStatus === 'error' ? '#EF4444' : '#F59E0B',
           }]} />
-          <Text style={styles.realtimeText}>
-            {realtimeStatus === 'connected'  ? 'Temps réel' :
-             realtimeStatus === 'error'      ? 'Hors ligne' : 'Connexion…'}
+          <Text style={styles.rtText}>
+            {rtStatus === 'connected' ? 'Temps réel' : rtStatus === 'error' ? 'Hors ligne' : 'Connexion…'}
           </Text>
-          <TouchableOpacity onPress={manualRefresh} disabled={refreshing} style={styles.refreshBtn}>
-            <Text style={[styles.refreshIcon, refreshing && { opacity: 0.35 }]}>↻</Text>
+          <TouchableOpacity onPress={() => { setRefreshing(true); load(); }} disabled={refreshing}>
+            <Text style={[styles.rtRefresh, refreshing && { opacity: 0.3 }]}>↻</Text>
           </TouchableOpacity>
         </View>
-        {lastUpdated ? (
-          <Text style={styles.lastUpdated}>Mis à jour à {lastUpdated}</Text>
-        ) : null}
+        {lastUpdated ? <Text style={styles.rtLast}>Mis à jour à {lastUpdated}</Text> : null}
         <TouchableOpacity style={styles.signOutBtn} onPress={signOut}>
           <Text style={styles.signOutText}>⏏  Déconnexion</Text>
         </TouchableOpacity>
       </View>
 
-      {/* ── Main list ── */}
-      <ScrollView style={styles.main} contentContainerStyle={styles.mainContent}>
+      {/* ── Kanban board ────────────────────────────────────────────────────── */}
+      <View style={styles.board}>
         <TextInput
           style={styles.search}
           value={search}
           onChangeText={setSearch}
-          placeholder="🔍  Rechercher un exposant, SIRET..."
+          placeholder="🔍  Rechercher un exposant, catégorie, email..."
           placeholderTextColor={Colors.textMuted}
         />
 
-        {SECTIONS.map(section => {
-          const items: any[] = grouped[section.key] ?? [];
-          if (items.length === 0) return null;
-          return (
-            <View key={section.key} style={styles.section}>
-              <View style={[styles.sectionHeader, { borderLeftColor: section.border }]}>
-                <Text style={[styles.sectionTitle, { color: section.border }]}>
-                  {section.title} ({items.length})
-                </Text>
-              </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.kanban} contentContainerStyle={styles.kanbanContent}>
+          {COLUMNS.map((col) => {
+            const items: any[] = grouped[col.key] ?? [];
+            return (
+              <View key={col.key} style={[styles.column, { backgroundColor: col.colBg }]}>
 
-              {items.map((item, idx) => (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[styles.card, selected?.id === item.id && styles.cardActive]}
-                  onPress={() => setSelected(item)}
-                  activeOpacity={0.85}
+                {/* En-tête colonne */}
+                <View style={[styles.colHeader, { backgroundColor: col.headerBg }]}>
+                  <View style={[styles.colDot, { backgroundColor: col.color }]} />
+                  <Text style={[styles.colTitle, { color: col.color }]}>{col.label}</Text>
+                  <View style={[styles.colBadge, { backgroundColor: col.color }]}>
+                    <Text style={styles.colBadgeText}>{items.length}</Text>
+                  </View>
+                </View>
+
+                {/* Cartes */}
+                <ScrollView
+                  style={styles.colScroll}
+                  contentContainerStyle={styles.colContent}
+                  showsVerticalScrollIndicator={false}
                 >
-                  <View style={styles.cardLeft}>
-                    {'numbered' in section && section.numbered && (
-                      <View style={[styles.numBadge, { backgroundColor: section.border }]}>
-                        <Text style={styles.numText}>{idx + 1}</Text>
-                      </View>
-                    )}
-                    <View style={[styles.avatar, { backgroundColor: section.border + '22' }]}>
-                      <Text style={[styles.avatarLetter, { color: section.border }]}>
-                        {(item.business_name?.[0] ?? '?').toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={styles.cardMeta}>
-                      <Text style={styles.cardName}>{item.business_name}</Text>
-                      <Text style={styles.cardSub}>
-                        {item.profiles?.first_name} {item.profiles?.last_name}
-                        {' · '}{item.product_category}
-                        {' · '}{new Date(item.created_at).toLocaleDateString('fr-FR')}
-                      </Text>
-                    </View>
-                  </View>
+                  {items.length === 0 && (
+                    <Text style={styles.colEmpty}>Aucune candidature</Text>
+                  )}
+                  {items.map((item, idx) => (
+                    <KanbanCard
+                      key={item.id}
+                      item={item}
+                      col={col}
+                      index={idx}
+                      isSelected={selected?.id === item.id}
+                      onPress={setSelected}
+                      onAction={updateStatus}
+                      disabled={updating}
+                    />
+                  ))}
+                </ScrollView>
 
-                  <View style={styles.cardRight}>
-                    <View style={[styles.statusBadge, { backgroundColor: STATUS_BG[item.status] }]}>
-                      <Text style={[styles.statusText, { color: StatusColors[item.status] }]}>
-                        {StatusLabels[item.status]}
-                      </Text>
-                    </View>
-                    <View style={styles.actionRow}>
-                      {'actions' in section && (section.actions as string[]).map((a: string) => (
-                        <TouchableOpacity
-                          key={a}
-                          style={[styles.actionBtn, { backgroundColor: ACTION_COLOR[a] }]}
-                          onPress={e => { e.stopPropagation?.(); updateStatus(item.id, a); }}
-                          disabled={updating}
-                        >
-                          <Text style={styles.actionBtnText}>{ACTION_LABEL[a]}</Text>
-                        </TouchableOpacity>
-                      ))}
-                      {'rollback' in section && (
-                        <TouchableOpacity
-                          style={[styles.actionBtn, { backgroundColor: ROLLBACK_COLOR }]}
-                          onPress={e => { e.stopPropagation?.(); updateStatus(item.id, (section as any).rollback); }}
-                          disabled={updating}
-                        >
-                          <Text style={styles.actionBtnText}>{ROLLBACK_LABEL[(section as any).rollback]}</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          );
-        })}
-      </ScrollView>
+              </View>
+            );
+          })}
+        </ScrollView>
+      </View>
 
-      {/* ── Detail panel ── */}
+      {/* ── Panneau détail ──────────────────────────────────────────────────── */}
       {selected && (
         <View style={styles.detail}>
           <TouchableOpacity style={styles.closeBtn} onPress={() => setSelected(null)}>
@@ -257,75 +264,70 @@ export default function AdminDashboard() {
           </TouchableOpacity>
 
           <View style={styles.detailHead}>
-            <View style={[styles.detailAvatar, { backgroundColor: StatusColors[selected.status] + '22' }]}>
-              <Text style={[styles.detailAvatarLetter, { color: StatusColors[selected.status] }]}>
-                {(selected.business_name?.[0] ?? '?').toUpperCase()}
-              </Text>
-            </View>
+            <Text style={styles.detailIcon}>{catIcon(selected.product_category)}</Text>
             <Text style={styles.detailName}>{selected.business_name}</Text>
-            <Text style={styles.detailSub}>{selected.product_category}{selected.candidature_type === 'foodtruck' ? ' · Food Truck' : ''}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: STATUS_BG[selected.status], alignSelf: 'center', marginTop: 6 }]}>
-              <Text style={[styles.statusText, { color: StatusColors[selected.status] }]}>
-                {StatusLabels[selected.status]}
+            <Text style={styles.detailCat}>
+              {selected.product_category}
+              {selected.candidature_type === 'foodtruck' ? ' · 🚚 Food Truck' : ''}
+            </Text>
+            <View style={[styles.detailStatusPill, { backgroundColor: StatusColors[selected.status] + '20' }]}>
+              <View style={[styles.detailStatusDot, { backgroundColor: StatusColors[selected.status] }]} />
+              <Text style={[styles.detailStatusText, { color: StatusColors[selected.status] }]}>
+                {COLUMNS.find(c => c.key === selected.status)?.label ?? selected.status}
               </Text>
             </View>
           </View>
 
-          {/* Quick action buttons */}
-          <View style={styles.detailBtns}>
-            {/* Forward actions */}
-            {selected.status === 'pending' && (
-              <QuickBtn label="→ Mettre en étude" color="#F59E0B" onPress={() => updateStatus(selected.id, 'reviewing')} disabled={updating} />
-            )}
-            {(selected.status === 'pending' || selected.status === 'reviewing') && (
-              <>
-                <QuickBtn label="✓ Retenir" color="#10B981" onPress={() => updateStatus(selected.id, 'accepted')} disabled={updating} />
-                <QuickBtn label="✗ Refuser" color="#EF4444" onPress={() => updateStatus(selected.id, 'rejected')} disabled={updating} />
-              </>
-            )}
-            {/* Rollback actions */}
-            {selected.status === 'reviewing' && (
-              <QuickBtn label="↩ Remettre en attente" color={ROLLBACK_COLOR} onPress={() => updateStatus(selected.id, 'pending')} disabled={updating} />
-            )}
-            {selected.status === 'accepted' && (
-              <QuickBtn label="↩ Remettre en étude" color={ROLLBACK_COLOR} onPress={() => updateStatus(selected.id, 'reviewing')} disabled={updating} />
-            )}
-            {selected.status === 'rejected' && (
-              <QuickBtn label="↩ Remettre en attente" color={ROLLBACK_COLOR} onPress={() => updateStatus(selected.id, 'pending')} disabled={updating} />
-            )}
-            <QuickBtn label="Dossier complet →" color={Colors.primary} onPress={() => router.push(`/(admin)/candidature/${selected.id}`)} />
+          {/* Actions rapides */}
+          <View style={styles.detailActions}>
+            {(NEXT[selected.status] ?? []).map(a => (
+              <TouchableOpacity
+                key={a.status}
+                style={[styles.detailActionBtn, { backgroundColor: a.color }]}
+                onPress={() => updateStatus(selected.id, a.status)}
+                disabled={updating}
+              >
+                <Text style={styles.detailActionText}>{a.label}</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={[styles.detailActionBtn, { backgroundColor: Colors.primary }]}
+              onPress={() => router.push(`/(admin)/candidature/${selected.id}`)}
+            >
+              <Text style={styles.detailActionText}>Dossier complet →</Text>
+            </TouchableOpacity>
           </View>
 
           <ScrollView style={styles.detailScroll}>
-            <DetailBlock title="CONTACT">
-              <DetailRow label="Nom" value={`${selected.profiles?.first_name ?? ''} ${selected.profiles?.last_name ?? ''}`} />
-              <DetailRow label="Email" value={selected.profiles?.email ?? '—'} />
-              {selected.profiles?.phone && <DetailRow label="Tél." value={selected.profiles.phone} />}
-            </DetailBlock>
-
-            <DetailBlock title="INFORMATIONS">
-              <DetailRow label="SIRET" value={selected.siret} />
-              <DetailRow label="Adresse" value={`${selected.address}, ${selected.postal_code} ${selected.city}`} />
-              {selected.website_url && <DetailRow label="Site" value={selected.website_url} />}
-              {selected.instagram_url && <DetailRow label="Instagram" value={`@${selected.instagram_url}`} />}
-            </DetailBlock>
-
-            <DetailBlock title="PRODUITS">
+            <Block title="CONTACT">
+              <Row label="Nom"    value={`${selected.contact_first_name ?? selected.profiles?.first_name ?? ''} ${selected.contact_last_name ?? selected.profiles?.last_name ?? ''}`.trim() || '—'} />
+              <Row label="Email"  value={selected.contact_email  ?? selected.profiles?.email ?? '—'} />
+              {(selected.contact_phone || selected.profiles?.phone) &&
+                <Row label="Tél." value={selected.contact_phone ?? selected.profiles?.phone} />}
+            </Block>
+            <Block title="ENTREPRISE">
+              <Row label="SIRET"   value={selected.siret} />
+              <Row label="Adresse" value={`${selected.address}, ${selected.postal_code} ${selected.city}`} />
+              {selected.website_url   && <Row label="Site"      value={selected.website_url} />}
+              {selected.instagram_url && <Row label="Instagram" value={`@${selected.instagram_url}`} />}
+            </Block>
+            <Block title="PRODUITS">
               <Text style={styles.detailDesc}>{selected.product_description}</Text>
-            </DetailBlock>
-
-            <DetailBlock title="LOGISTIQUE">
-              <DetailRow label="Électricité" value={selected.electricity_needed ? 'Oui' : 'Non'} />
-              <DetailRow label="Ancien exposant" value={selected.previous_participant ? 'Oui' : 'Non'} />
-            </DetailBlock>
-
-            <DetailBlock title="HISTORIQUE">
+            </Block>
+            <Block title="LOGISTIQUE">
+              <Row label="Électricité"    value={selected.electricity_needed   ? 'Oui' : 'Non'} />
+              <Row label="Ancien exposant" value={selected.previous_participant ? 'Oui' : 'Non'} />
+            </Block>
+            {selected.admin_notes ? (
+              <Block title="NOTES INTERNES">
+                <Text style={styles.detailDesc}>{selected.admin_notes}</Text>
+              </Block>
+            ) : null}
+            <Block title="HISTORIQUE">
               <Text style={styles.detailDate}>
-                Déposée le {new Date(selected.created_at).toLocaleDateString('fr-FR', {
-                  day: 'numeric', month: 'long', year: 'numeric',
-                })}
+                Déposée le {new Date(selected.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
               </Text>
-            </DetailBlock>
+            </Block>
           </ScrollView>
         </View>
       )}
@@ -333,124 +335,192 @@ export default function AdminDashboard() {
   );
 }
 
-function SidebarItem({ dot, label, count }: { dot: string; label: string; count: number }) {
-  return (
-    <View style={styles.sidebarItem}>
-      <View style={[styles.dot, { backgroundColor: dot }]} />
-      <Text style={styles.sidebarItemLabel}>{label}</Text>
-      <Text style={[styles.sidebarItemCount, { color: dot }]}>{count}</Text>
-    </View>
-  );
-}
+// ─── Carte kanban ─────────────────────────────────────────────────────────────
+function KanbanCard({ item, col, index, isSelected, onPress, onAction, disabled }: {
+  item: any; col: (typeof COLUMNS)[number]; index: number;
+  isSelected: boolean; onPress: (i: any) => void;
+  onAction: (id: string, s: string) => void; disabled: boolean;
+}) {
+  const icon = item.candidature_type === 'foodtruck' ? '🚚' : catIcon(item.product_category);
+  const actions = NEXT[item.status] ?? [];
+  const contact = item.contact_first_name ?? item.profiles?.first_name;
 
-function QuickBtn({ label, color, onPress, disabled }: { label: string; color: string; onPress: () => void; disabled?: boolean }) {
   return (
-    <TouchableOpacity style={[styles.quickBtn, { backgroundColor: color }]} onPress={onPress} disabled={disabled}>
-      <Text style={styles.quickBtnText}>{label}</Text>
+    <TouchableOpacity
+      style={[styles.card, isSelected && { borderColor: col.color, borderWidth: 2 }]}
+      onPress={() => onPress(item)}
+      activeOpacity={0.88}
+    >
+      <View style={styles.cardTop}>
+        <View style={styles.cardTopLeft}>
+          <Text style={styles.cardCatIcon}>{icon}</Text>
+          {'numbered' in col && col.numbered && (
+            <View style={[styles.numBadge, { backgroundColor: col.color }]}>
+              <Text style={styles.numText}>{index + 1}</Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.cardTopRight}>
+          {item.candidature_type === 'foodtruck' && (
+            <View style={styles.typeBadge}>
+              <Text style={styles.typeBadgeText}>Food Truck</Text>
+            </View>
+          )}
+          {item.admin_notes && <Text style={styles.notesDot}>📝</Text>}
+        </View>
+      </View>
+
+      <Text style={styles.cardName} numberOfLines={2}>{item.business_name}</Text>
+      <Text style={styles.cardCat} numberOfLines={1}>{item.product_category ?? '—'}</Text>
+
+      {contact && (
+        <Text style={styles.cardContact} numberOfLines={1}>👤 {contact}</Text>
+      )}
+
+      <Text style={styles.cardDate}>
+        {new Date(item.created_at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: '2-digit' })}
+      </Text>
+
+      {/* Actions */}
+      {actions.length > 0 && (
+        <View style={styles.cardActions}>
+          {actions.map(a => (
+            <TouchableOpacity
+              key={a.status}
+              style={[styles.chip, { backgroundColor: a.color + '18', borderColor: a.color + '60' }]}
+              onPress={e => { (e as any).stopPropagation?.(); onAction(item.id, a.status); }}
+              disabled={disabled}
+            >
+              <Text style={[styles.chipText, { color: a.color }]}>{a.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
 
-function DetailBlock({ title, children }: { title: string; children: React.ReactNode }) {
+// ─── Helpers sidebar ──────────────────────────────────────────────────────────
+function SbItem({ dot, label, count, urgent }: { dot: string; label: string; count: number; urgent?: boolean }) {
   return (
-    <View style={styles.detailBlock}>
-      <Text style={styles.detailBlockTitle}>{title}</Text>
+    <View style={styles.sbItem}>
+      <View style={[styles.sbDot, { backgroundColor: dot }]} />
+      <Text style={[styles.sbLabel, urgent && { fontWeight: '700', color: Colors.text }]}>{label}</Text>
+      <Text style={[styles.sbCount, { color: dot }]}>{count}</Text>
+    </View>
+  );
+}
+
+// ─── Helpers détail ───────────────────────────────────────────────────────────
+function Block({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.block}>
+      <Text style={styles.blockTitle}>{title}</Text>
       {children}
     </View>
   );
 }
-
-function DetailRow({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value?: string | null }) {
   return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailRowLabel}>{label}</Text>
-      <Text style={styles.detailRowValue}>{value}</Text>
+    <View style={styles.row}>
+      <Text style={styles.rowLabel}>{label}</Text>
+      <Text style={styles.rowValue}>{value || '—'}</Text>
     </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  centered:           { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
-  root:               { flex: 1, flexDirection: 'row', backgroundColor: '#F1F5F9' },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' },
+  root:     { flex: 1, flexDirection: 'row', backgroundColor: '#F1F5F9' },
 
-  // Sidebar
-  sidebar:            { width: 220, backgroundColor: '#FFFFFF', borderRightWidth: 1, borderRightColor: '#E2E8F0', paddingVertical: 24, paddingHorizontal: 16, flexDirection: 'column' },
-  sidebarTop:         { marginBottom: 28 },
-  logoRow:            { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
-  sidebarWordmark:    { flexDirection: 'row', alignItems: 'baseline' },
-  appTitleBold:       { fontSize: 20, fontWeight: '800', color: '#1A202C' },
-  appTitleLight:      { fontSize: 20, fontWeight: '300', color: Colors.primary },
-  appSub:             { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
-  sidebarLabel:       { fontSize: 10, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1, marginBottom: 10 },
-  sidebarItem:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 7 },
-  dot:                { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
-  sidebarItemLabel:   { flex: 1, fontSize: 13, color: Colors.text },
-  sidebarItemCount:   { fontSize: 13, fontWeight: '700' },
-  sidebarBtn:         { backgroundColor: Colors.surface, borderRadius: 8, padding: 10, borderWidth: 1, borderColor: Colors.border, marginBottom: 6 },
-  sidebarBtnText:     { fontSize: 12, color: Colors.text },
-  signOutBtn:         { paddingVertical: 10, paddingHorizontal: 8, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 8 },
-  signOutText:        { fontSize: 13, color: Colors.textSecondary },
-  realtimeBar:        { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 4 },
-  realtimeDot:        { width: 8, height: 8, borderRadius: 4 },
-  realtimeText:       { flex: 1, fontSize: 11, color: Colors.textSecondary },
-  refreshBtn:         { padding: 4 },
-  refreshIcon:        { fontSize: 16, color: Colors.primary, fontWeight: 'bold' },
-  lastUpdated:        { fontSize: 9, color: Colors.textMuted, marginBottom: 6 },
+  // ── Sidebar
+  sidebar:    { width: 210, backgroundColor: '#fff', borderRightWidth: 1, borderRightColor: '#E2E8F0', paddingVertical: 20, paddingHorizontal: 14, flexDirection: 'column' },
+  sidebarTop: { marginBottom: 22 },
+  logoRow:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
+  wordmark:   { flexDirection: 'row', alignItems: 'baseline' },
+  wBold:      { fontSize: 18, fontWeight: '800', color: '#1A202C' },
+  wLight:     { fontSize: 18, fontWeight: '300', color: Colors.primary },
+  appSub:     { fontSize: 10, color: Colors.textMuted },
+  sideLabel:  { fontSize: 9, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1, marginBottom: 8, marginTop: 4 },
 
-  // Main
-  main:               { flex: 1 },
-  mainContent:        { padding: 20, paddingBottom: 40 },
-  search:             { backgroundColor: '#FFFFFF', borderRadius: 10, borderWidth: 1, borderColor: Colors.border, padding: 12, fontSize: 14, color: Colors.text, marginBottom: 20 },
+  sbItem:     { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
+  sbDot:      { width: 7, height: 7, borderRadius: 4, marginRight: 8 },
+  sbLabel:    { flex: 1, fontSize: 12, color: Colors.textSecondary },
+  sbCount:    { fontSize: 12, fontWeight: '700' },
 
-  // Section
-  section:            { marginBottom: 24 },
-  sectionHeader:      { borderLeftWidth: 4, paddingLeft: 12, marginBottom: 10 },
-  sectionTitle:       { fontSize: 12, fontWeight: '700', letterSpacing: 0.5 },
+  catItem:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 6 },
+  catItemIcon: { fontSize: 14, width: 20, textAlign: 'center' },
+  catItemLabel: { flex: 1, fontSize: 11, color: Colors.textSecondary },
+  catItemCount: { fontSize: 11, fontWeight: '700', color: Colors.primary, backgroundColor: Colors.primary + '15', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 },
 
-  // Card
-  card:               { backgroundColor: '#FFFFFF', borderRadius: 12, padding: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: Colors.border },
-  cardActive:         { borderColor: Colors.primary, shadowColor: Colors.primary, shadowOpacity: 0.1, shadowRadius: 4 },
-  cardLeft:           { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  cardMeta:           { flex: 1 },
-  cardName:           { fontSize: 14, fontWeight: '600', color: Colors.text },
-  cardSub:            { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
-  cardRight:          { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  sideBtn:     { backgroundColor: Colors.surface, borderRadius: 7, padding: 9, borderWidth: 1, borderColor: Colors.border, marginBottom: 5 },
+  sideBtnText: { fontSize: 11, color: Colors.text },
 
-  // Avatar
-  avatar:             { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  avatarLetter:       { fontSize: 15, fontWeight: 'bold' },
+  rtBar:     { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 8, borderTopWidth: 1, borderTopColor: Colors.border },
+  rtDot:     { width: 7, height: 7, borderRadius: 4 },
+  rtText:    { flex: 1, fontSize: 10, color: Colors.textSecondary },
+  rtRefresh: { fontSize: 15, color: Colors.primary, fontWeight: 'bold', paddingHorizontal: 4 },
+  rtLast:    { fontSize: 9, color: Colors.textMuted, marginBottom: 6 },
+  signOutBtn:  { paddingVertical: 9, borderTopWidth: 1, borderTopColor: Colors.border },
+  signOutText: { fontSize: 12, color: Colors.textSecondary },
 
-  // Number badge (queue)
-  numBadge:           { width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
-  numText:            { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  // ── Board
+  board:         { flex: 1, flexDirection: 'column', padding: 14 },
+  search:        { backgroundColor: '#fff', borderRadius: 10, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 14, paddingVertical: 10, fontSize: 13, color: Colors.text, marginBottom: 14 },
+  kanban:        { flex: 1 },
+  kanbanContent: { flexDirection: 'row', gap: 10, paddingBottom: 20, alignItems: 'flex-start' },
 
-  // Status badge
-  statusBadge:        { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4 },
-  statusText:         { fontSize: 11, fontWeight: '600' },
+  // ── Colonne
+  column:    { width: COL_W, borderRadius: 12, overflow: 'hidden' },
+  colHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, gap: 7 },
+  colDot:    { width: 9, height: 9, borderRadius: 5 },
+  colTitle:  { flex: 1, fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+  colBadge:  { borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 },
+  colBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  colScroll: { maxHeight: SCREEN_H - 160 },
+  colContent: { padding: 8, gap: 8 },
+  colEmpty:  { textAlign: 'center', color: Colors.textMuted, fontSize: 12, paddingVertical: 32 },
 
-  // Action buttons on card
-  actionRow:          { flexDirection: 'row', gap: 6, marginLeft: 8 },
-  actionBtn:          { borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6 },
-  actionBtnText:      { color: '#fff', fontSize: 11, fontWeight: '700' },
+  // ── Carte
+  card:       { backgroundColor: '#fff', borderRadius: 10, padding: 12, borderWidth: 1, borderColor: '#E2E8F0' },
+  cardTop:    { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  cardTopLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardTopRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  cardCatIcon: { fontSize: 22 },
+  numBadge:   { width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  numText:    { color: '#fff', fontSize: 10, fontWeight: '800' },
+  typeBadge:  { backgroundColor: '#DBEAFE', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2 },
+  typeBadgeText: { color: '#2563EB', fontSize: 9, fontWeight: '700' },
+  notesDot:   { fontSize: 12 },
+  cardName:   { fontSize: 13, fontWeight: '700', color: Colors.text, marginBottom: 3 },
+  cardCat:    { fontSize: 11, color: Colors.textSecondary, marginBottom: 4 },
+  cardContact: { fontSize: 11, color: Colors.textMuted, marginBottom: 3 },
+  cardDate:   { fontSize: 10, color: Colors.textMuted, marginBottom: 8 },
+  cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 5 },
+  chip:       { borderRadius: 6, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4 },
+  chipText:   { fontSize: 11, fontWeight: '600' },
 
-  // Detail panel
-  detail:             { width: 300, backgroundColor: '#FFFFFF', borderLeftWidth: 1, borderLeftColor: Colors.border, flexDirection: 'column' },
-  closeBtn:           { position: 'absolute', top: 14, right: 14, zIndex: 10, padding: 6 },
-  closeBtnText:       { color: Colors.textMuted, fontSize: 16 },
-  detailHead:         { alignItems: 'center', padding: 24, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  detailAvatar:       { width: 56, height: 56, borderRadius: 28, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
-  detailAvatarLetter: { fontSize: 22, fontWeight: 'bold' },
-  detailName:         { fontSize: 16, fontWeight: 'bold', color: Colors.text, textAlign: 'center' },
-  detailSub:          { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  detailBtns:         { padding: 14, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 8 },
-  quickBtn:           { borderRadius: 8, padding: 10, alignItems: 'center' },
-  quickBtnText:       { color: '#fff', fontSize: 12, fontWeight: '700' },
-  detailScroll:       { flex: 1 },
-  detailBlock:        { padding: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  detailBlockTitle:   { fontSize: 10, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1, marginBottom: 10 },
-  detailRow:          { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5 },
-  detailRowLabel:     { fontSize: 12, color: Colors.textSecondary },
-  detailRowValue:     { fontSize: 12, color: Colors.text, fontWeight: '500', flex: 1, textAlign: 'right' },
-  detailDesc:         { fontSize: 13, color: Colors.text, lineHeight: 20 },
-  detailDate:         { fontSize: 12, color: Colors.textSecondary },
+  // ── Panneau détail
+  detail:    { width: 280, backgroundColor: '#fff', borderLeftWidth: 1, borderLeftColor: Colors.border },
+  closeBtn:  { position: 'absolute', top: 12, right: 12, zIndex: 10, padding: 6 },
+  closeBtnText: { color: Colors.textMuted, fontSize: 16 },
+  detailHead: { alignItems: 'center', padding: 22, paddingBottom: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  detailIcon: { fontSize: 40, marginBottom: 8 },
+  detailName: { fontSize: 15, fontWeight: '800', color: Colors.text, textAlign: 'center' },
+  detailCat:  { fontSize: 12, color: Colors.textSecondary, marginTop: 3, textAlign: 'center' },
+  detailStatusPill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 5, marginTop: 10 },
+  detailStatusDot:  { width: 7, height: 7, borderRadius: 4 },
+  detailStatusText: { fontSize: 12, fontWeight: '700' },
+  detailActions: { padding: 12, borderBottomWidth: 1, borderBottomColor: Colors.border, gap: 7 },
+  detailActionBtn:  { borderRadius: 8, padding: 10, alignItems: 'center' },
+  detailActionText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  detailScroll: { flex: 1 },
+  block:      { padding: 14, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  blockTitle: { fontSize: 9, fontWeight: '700', color: Colors.textMuted, letterSpacing: 1, marginBottom: 9, textTransform: 'uppercase' },
+  row:        { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  rowLabel:   { fontSize: 11, color: Colors.textSecondary },
+  rowValue:   { fontSize: 11, color: Colors.text, fontWeight: '500', flex: 1, textAlign: 'right' },
+  detailDesc: { fontSize: 12, color: Colors.text, lineHeight: 18 },
+  detailDate: { fontSize: 11, color: Colors.textSecondary },
 });
